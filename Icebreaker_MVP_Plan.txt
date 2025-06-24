@@ -1,0 +1,98 @@
+
+# MVP Plan: Icebreaker – Proximity-Based Social Connection App
+
+## 🎯 Objective
+Build a privacy-first mobile app that helps users connect with people physically nearby by breaking the first-contact barrier. Users must explicitly opt in to be discoverable. Profiles can be matched and recommended based on proximity and mutual interests.
+
+---
+
+## 🚀 Core Features (MVP)
+
+### 1. User Onboarding
+- Sign up / Log in (email, phone number, or OAuth)
+- Profile creation:
+  - Name (first name only shown publicly)
+  - Optional profile photo (with toggle for visibility)
+  - Age (or age range)
+  - Interests/tags
+  - Bio (optional)
+  - Visibility preferences (visible to others nearby or not)
+
+### 2. Discovery & Proximity Engine
+- Toggle: "Visible to nearby users"
+- Detect nearby users using:
+  - GPS for rough proximity (city, venue)
+  - Bluetooth Low Energy (BLE) or Wi-Fi for fine-grain detection
+- Range control: Choose visibility range (5m, 10m, 20m)
+- Only show users who are also opted in
+- Users shown as avatars or anonymized until they accept a request
+
+### 3. Profile Interaction
+- View nearby users' basic profiles (based on preferences)
+- Mutual interest indicator (e.g., shared tags)
+- Optional: Profile picture visible if user allows
+- Send a “wave” or “icebreaker”
+- Conversation starter suggestions based on shared interests
+
+### 4. Friend Request System
+- Send friend request
+- User receives anonymous alert: “Someone nearby is interested in connecting”
+- Accepting request reveals full profile and enables chat
+- One-to-one chat (text only, no media in MVP)
+
+### 5. Privacy & Safety
+- Full opt-in visibility
+- Photo visibility toggle (public/private/per session)
+- Block & report system
+- Limit contact attempts per user per day
+- Expire visibility after 30 mins or upon leaving zone
+- Profile activity status (online/offline)
+
+### 6. Settings & Preferences
+- Visibility controls (radius, duration, picture visibility)
+- Interests management
+- Profile edit
+- Opt-in/opt-out of discovery mode
+- Notification settings
+
+---
+
+## 🛠️ Tech Stack
+- **Frontend**: React Native (cross-platform)
+- **Backend**: Node.js with Express
+- **Database**: MongoDB or PostgreSQL (for user profiles, messages)
+- **Authentication**: Firebase Auth or Auth0
+- **Nearby Detection**:
+  - GPS (Mapbox/Google Maps API)
+  - BLE (React Native BLE library)
+- **Cloud**: AWS/GCP/Azure for hosting, storage
+
+---
+
+## ✨ Future Enhancements (Post-MVP)
+- AI-generated conversation starters
+- Event-based discovery (e.g., at concerts, conferences)
+- Verified profiles
+- Mood or vibe-based matching
+- Group discovery mode
+- Local language/translation options
+- Lightweight games for breaking the ice
+
+---
+
+## 📦 Deliverables
+- React Native mobile app (iOS + Android)
+- Functional backend with REST API
+- Location + BLE-based discovery engine
+- Chat and friend request system
+- Safety and moderation features
+- MVP-level UI/UX
+
+---
+
+## ✅ Success Metrics
+- % of users who opt-in to visibility
+- Number of waves/friend requests per session
+- Average session length
+- Retention after first interaction (Day 1/Day 7)
+- Reported safety incidents (should be 0)
