@@ -21,7 +21,7 @@ struct IcebreakerApp: App {
 struct ContentView: View {
     @StateObject private var authManager = FirebaseAuthManager()
     @StateObject private var questionManager = AIQuestionManager()
-    @StateObject private var chatManager = ChatManager()
+    @StateObject private var chatManager = IcebreakerChatManager()
     @StateObject private var matchEngine = MatchEngine()
     
     var body: some View {
@@ -387,7 +387,7 @@ struct SignInView: View {
 
 struct MainTabView: View {
     @EnvironmentObject var questionManager: AIQuestionManager
-    @EnvironmentObject var chatManager: ChatManager
+    @EnvironmentObject var chatManager: IcebreakerChatManager
     
     var body: some View {
         TabView {

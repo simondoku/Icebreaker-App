@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>AI_API_KEY</key>
+	<string>YOUR_API_KEY_HERE</string>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Icebreaker sends notifications for new matches and messages so you never miss a connection.</string>
 </dict>

@@ -102,3 +102,13 @@ GoogleService-Info.plist
 .env
 *.env
 
+# Sensitive configuration files
+Info.plist
+**/Info.plist
+Icebreaker/Icebreaker/Info.plist
+
+# API Keys and secrets
+*.key
+*.secret
+config.json
+

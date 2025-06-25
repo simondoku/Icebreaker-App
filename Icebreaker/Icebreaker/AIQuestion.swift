@@ -1,12 +1,14 @@
 import Foundation
+import SwiftUI
+import Combine
 
+// MARK: - AI Question Models
 struct AIQuestion: Identifiable, Codable {
-    var id: UUID
+    let id: UUID
     let text: String
     let category: QuestionCategory
     var createdAt: Date
     
-    // Custom initializer for creating new questions
     init(text: String, category: QuestionCategory) {
         self.id = UUID()
         self.text = text
@@ -14,25 +16,17 @@ struct AIQuestion: Identifiable, Codable {
         self.createdAt = Date()
     }
     
-    // Codable initializer for decoding from storage
-    init(id: UUID, text: String, category: QuestionCategory, createdAt: Date) {
-        self.id = id
-        self.text = text
-        self.category = category
-        self.createdAt = createdAt
-    }
-    
     enum QuestionCategory: String, CaseIterable, Codable {
-        case lifestyle = "LIFESTYLE"
-        case food = "FOOD"
-        case books = "BOOKS"
-        case goals = "GOALS"
-        case daily = "DAILY"
+        case lifestyle = "lifestyle"
+        case food = "food"
+        case books = "books"
+        case goals = "goals"
+        case daily = "daily"
         
         var emoji: String {
             switch self {
-            case .lifestyle: return "🏠"
-            case .food: return "🍜"
+            case .lifestyle: return "🌟"
+            case .food: return "🍕"
             case .books: return "📚"
             case .goals: return "🎯"
             case .daily: return "☀️"
@@ -67,8 +61,9 @@ struct AIAnswer: Identifiable, Codable {
         self.createdAt = createdAt
     }
     
-    // Simple matching - in real app this would be more sophisticated
+    // Enhanced similarity calculation using AI service
     func similarity(to other: AIAnswer) -> Double {
+        // Fallback to simple word matching if AI service is unavailable
         let words1 = Set(text.lowercased().components(separatedBy: .whitespacesAndNewlines))
         let words2 = Set(other.text.lowercased().components(separatedBy: .whitespacesAndNewlines))
         
@@ -79,18 +74,23 @@ struct AIAnswer: Identifiable, Codable {
     }
 }
 
-// AI Question Manager
+// Enhanced AI Question Manager with real AI integration
 class AIQuestionManager: ObservableObject {
     @Published var currentQuestion: AIQuestion?
     @Published var userAnswers: [AIAnswer] = []
     @Published var hasPendingQuestion = true
+    @Published var isGeneratingQuestion = false
+    @Published var isAnalyzingAnswer = false
     
-    // Sample questions - in real app these would come from your AI backend
+    private let aiService = AIService.shared
+    private var cancellables = Set<AnyCancellable>()
+    
+    // Fallback questions for offline/error scenarios
     private let sampleQuestions: [AIQuestion] = [
         AIQuestion(text: "What book are you reading right now, and what's the most interesting thing you've learned from it so far?", category: .books),
         AIQuestion(text: "What food did you try for the first time this week?", category: .food),
         AIQuestion(text: "What was the first thing you did this morning?", category: .daily),
-        AIQuestion(text: "What's one small habit you're trying to build this month?", category: .lifestyle),  // Fixed: added .lifestyle
+        AIQuestion(text: "What's one small habit you're trying to build this month?", category: .lifestyle),
         AIQuestion(text: "If you could learn any skill instantly, what would it be and why?", category: .goals),
         AIQuestion(text: "What's your go-to comfort food when you've had a long day?", category: .food),
         AIQuestion(text: "What's the last thing that made you laugh out loud?", category: .daily),
@@ -102,49 +102,126 @@ class AIQuestionManager: ObservableObject {
         generateDailyQuestion()
     }
     
-    func generateDailyQuestion() {
-        // Simple logic - pick a random question for now
-        // In real app, AI would generate personalized questions
-        currentQuestion = sampleQuestions.randomElement()
-        hasPendingQuestion = true
+    // MARK: - AI-Powered Question Generation
+    func generateDailyQuestion(category: AIQuestion.QuestionCategory? = nil) {
+        isGeneratingQuestion = true
+        
+        // Try AI generation first
+        aiService.generatePersonalizedQuestion(
+            userHistory: Array(userAnswers.suffix(5)), // Use last 5 answers for context
+            userPreferences: extractUserPreferences(),
+            category: category
+        )
+        .sink(
+            receiveCompletion: { [weak self] completion in
+                DispatchQueue.main.async {
+                    if case .failure(let error) = completion {
+                        print("AI question generation failed: \(error)")
+                        // Fallback to sample questions
+                        self?.useFallbackQuestion(category: category)
+                    }
+                    self?.isGeneratingQuestion = false
+                }
+            },
+            receiveValue: { [weak self] question in
+                DispatchQueue.main.async {
+                    self?.currentQuestion = question
+                    self?.hasPendingQuestion = true
+                    self?.isGeneratingQuestion = false
+                }
+            }
+        )
+        .store(in: &cancellables)
+    }
+    
+    private func useFallbackQuestion(category: AIQuestion.QuestionCategory?) {
+        DispatchQueue.main.async {
+            if let category = category {
+                self.currentQuestion = self.sampleQuestions.first { $0.category == category } ?? self.sampleQuestions.randomElement()
+            } else {
+                self.currentQuestion = self.sampleQuestions.randomElement()
+            }
+            self.hasPendingQuestion = true
+        }
+    }
+    
+    private func extractUserPreferences() -> [String] {
+        // Extract common themes from user's previous answers
+        let allText = userAnswers.map { $0.text }.joined(separator: " ")
+        let words = allText.lowercased().components(separatedBy: .whitespacesAndNewlines)
+        
+        // Common interest keywords to look for
+        let interestKeywords = [
+            "reading", "books", "music", "travel", "cooking", "fitness", "meditation",
+            "art", "coffee", "hiking", "photography", "movies", "gaming", "technology",
+            "nature", "writing", "learning", "yoga", "running", "dancing"
+        ]
+        
+        return interestKeywords.filter { keyword in
+            words.contains { $0.contains(keyword) }
+        }
     }
     
     func submitAnswer(_ text: String) {
         guard let question = currentQuestion else { return }
         
-        let answer = AIAnswer(
-            questionId: question.id,
-            text: text
-        )
-        
+        let answer = AIAnswer(questionId: question.id, text: text)
         userAnswers.append(answer)
         saveAnswers()
         
-        currentQuestion = nil
         hasPendingQuestion = false
+        currentQuestion = nil
         
-        // Schedule next question (for demo, we'll allow immediate new questions)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            self.scheduleNextQuestion()
+        // Generate next question for tomorrow
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            self.generateDailyQuestion()
         }
     }
     
     func skipQuestion() {
-        currentQuestion = nil
         hasPendingQuestion = false
-        
-        // Still schedule next question but with longer delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-            self.scheduleNextQuestion()
-        }
-    }
-    
-    private func scheduleNextQuestion() {
-        // For demo - generate new question after a delay
-        // In real app, this would be based on time intervals (daily, etc.)
+        currentQuestion = nil
         generateDailyQuestion()
     }
     
+    // MARK: - Enhanced Answer Analysis
+    func analyzeAnswerCompatibility(
+        userAnswer: AIAnswer,
+        otherAnswer: AIAnswer,
+        questionText: String,
+        completion: @escaping (CompatibilityAnalysis) -> Void
+    ) {
+        isAnalyzingAnswer = true
+        
+        aiService.analyzeCompatibility(
+            userAnswer: userAnswer,
+            otherAnswer: otherAnswer,
+            questionText: questionText
+        )
+        .sink(
+            receiveCompletion: { [weak self] completionResult in
+                if case .failure(let error) = completionResult {
+                    print("AI compatibility analysis failed: \(error)")
+                    // Fallback to simple analysis
+                    let fallbackScore = userAnswer.similarity(to: otherAnswer) * 100
+                    let fallbackAnalysis = CompatibilityAnalysis(
+                        score: fallbackScore,
+                        reason: "Similar responses detected",
+                        sharedTopics: []
+                    )
+                    completion(fallbackAnalysis)
+                }
+                self?.isAnalyzingAnswer = false
+            },
+            receiveValue: { [weak self] analysis in
+                completion(analysis)
+                self?.isAnalyzingAnswer = false
+            }
+        )
+        .store(in: &cancellables)
+    }
+    
+    // MARK: - Data Persistence
     private func saveAnswers() {
         if let encoded = try? JSONEncoder().encode(userAnswers) {
             UserDefaults.standard.set(encoded, forKey: "userAnswers")
@@ -175,5 +252,27 @@ class AIQuestionManager: ObservableObject {
         }
         
         return comparisons > 0 ? (totalSimilarity / Double(comparisons)) * 100 : 0
+    }
+    
+    // MARK: - User Preferences & Settings
+    func getAnswerHistory(limit: Int = 10) -> [AIAnswer] {
+        return Array(userAnswers.suffix(limit))
+    }
+    
+    func deleteAnswer(_ answer: AIAnswer) {
+        userAnswers.removeAll { $0.id == answer.id }
+        saveAnswers()
+    }
+    
+    func updateAnswer(_ answer: AIAnswer, newText: String) {
+        if let index = userAnswers.firstIndex(where: { $0.id == answer.id }) {
+            userAnswers[index] = AIAnswer(
+                id: answer.id,
+                questionId: answer.questionId,
+                text: newText,
+                createdAt: answer.createdAt
+            )
+            saveAnswers()
+        }
     }
 }

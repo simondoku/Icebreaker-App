@@ -139,6 +139,36 @@ struct GlassSettingsView: View {
                         }
                     }
                     
+                    // Debug Section (only in debug builds)
+                    #if DEBUG
+                    NavigationLink(destination: AIDebugView()) {
+                        HStack {
+                            Image(systemName: "ladybug.fill")
+                                .foregroundColor(.orange)
+                                .font(.title2)
+                                .frame(width: 40)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("AI Debug Console")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                
+                                Text("Test AI integration and responses")
+                                    .font(.caption)
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.white.opacity(0.3))
+                                .font(.caption)
+                        }
+                        .padding()
+                        .glassMorphism(intensity: 0.05, cornerRadius: 16)
+                    }
+                    #endif
+                    
                     Spacer(minLength: 100)
                 }
                 .padding(.horizontal, 20)

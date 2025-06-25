@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct GlassChatListView: View {
-    @StateObject private var chatManager = ChatManager()
-    @State private var selectedConversation: Conversation?
+    @EnvironmentObject var chatManager: IcebreakerChatManager
+    @State private var selectedConversation: IcebreakerChatConversation?
     @State private var showingChat = false
     
     var body: some View {
@@ -19,10 +19,10 @@ struct GlassChatListView: View {
                 } else {
                     List {
                         ForEach(chatManager.conversations) { conversation in
-                            ChatRow(conversation: conversation) {
+                            IcebreakerChatRow(conversation: conversation) {
                                 selectedConversation = conversation
                                 showingChat = true
-                                chatManager.markAsRead(conversationId: conversation.id)
+                                chatManager.markAsRead(conversation.id)
                             }
                             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                             .listRowSeparator(.hidden)
@@ -33,24 +33,16 @@ struct GlassChatListView: View {
             .navigationTitle("Messages")
             .sheet(isPresented: $showingChat) {
                 if let conversation = selectedConversation {
-                    ChatView(conversation: conversation, chatManager: chatManager)
+                    SimpleIcebreakerChatView(conversation: conversation)
                 }
             }
         }
     }
 
-// Individual chat row
-struct ChatRow: View {
-    let conversation: Conversation
+// Individual chat row using the Icebreaker types
+struct IcebreakerChatRow: View {
+    let conversation: IcebreakerChatConversation
     let onTap: () -> Void
-    
-    private var otherParticipantName: String {
-        conversation.otherParticipantName(currentUserId: "current_user")
-    }
-    
-    private var unreadCount: Int {
-        conversation.unreadCount(for: "current_user")
-    }
     
     var body: some View {
         Button(action: onTap) {
@@ -60,7 +52,7 @@ struct ChatRow: View {
                     .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
                     .frame(width: 50, height: 50)
                     .overlay(
-                        Text(otherParticipantName.prefix(1))
+                        Text(conversation.otherUserName.prefix(1))
                             .font(.system(size: 20, weight: .bold))
                             .foregroundColor(.white)
                     )
@@ -68,30 +60,28 @@ struct ChatRow: View {
                 // Message info
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(otherParticipantName)
+                        Text(conversation.otherUserName)
                             .font(.headline)
                             .fontWeight(.semibold)
                             .foregroundColor(.primary)
                         
                         Spacer()
                         
-                        Text(conversation.lastMessageTimestamp, style: .time)
+                        Text(conversation.lastMessageTime, style: .time)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     
                     HStack {
-                        if let lastMessage = conversation.lastMessage {
-                            Text(lastMessage.text)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .lineLimit(2)
-                        }
+                        Text(conversation.lastMessage)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
                         
                         Spacer()
                         
-                        if unreadCount > 0 {
-                            Text("\(unreadCount)")
+                        if conversation.unreadCount > 0 {
+                            Text("\(conversation.unreadCount)")
                                 .font(.caption)
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
@@ -106,6 +96,57 @@ struct ChatRow: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// Simple chat view for the Icebreaker conversations
+struct SimpleIcebreakerChatView: View {
+    let conversation: IcebreakerChatConversation
+    @Environment(\.dismiss) private var dismiss
+    @State private var messageText = ""
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Button("Back") { dismiss() }
+                    .foregroundColor(.cyan)
+                Spacer()
+                Text(conversation.otherUserName)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Spacer()
+                Button("Info") { }
+                    .foregroundColor(.cyan)
+            }
+            .padding()
+            .background(Color.black.opacity(0.3))
+            
+            // Messages area
+            ScrollView {
+                VStack(spacing: 12) {
+                    Text(conversation.lastMessage)
+                        .font(.body)
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(12)
+                }
+                .padding()
+            }
+            
+            // Input
+            HStack {
+                TextField("Type a message...", text: $messageText)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                Button("Send") {
+                    messageText = ""
+                }
+                .disabled(messageText.isEmpty)
+            }
+            .padding()
+        }
+        .background(AnimatedBackground().ignoresSafeArea())
     }
 }
 
