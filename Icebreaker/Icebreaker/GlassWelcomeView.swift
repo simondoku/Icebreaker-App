@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct GlassWelcomeView: View {
-    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var authManager: FirebaseAuthManager
     @State private var showingSignUp = false
     
     var body: some View {
@@ -83,7 +83,7 @@ struct GlassWelcomeView: View {
                     
                     Button("I already have an account") {
                         // Demo account
-                        authManager.signUp(firstName: "Demo User", age: 25, bio: "Just testing!")
+                        authManager.signUp(email: "demo@example.com", password: "demo123", firstName: "Demo User") { _ in }
                     }
                     .buttonStyle(GlassButtonStyle(isSecondary: true))
                     .frame(maxWidth: .infinity)
@@ -135,139 +135,141 @@ struct FeatureGlassCard: View {
 }
 
 struct GlassSignUpView: View {
-    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var authManager: FirebaseAuthManager
     @Environment(\.dismiss) private var dismiss
     
     @State private var firstName = ""
-    @State private var age = ""
+    @State private var email = ""
+    @State private var password = ""
     @State private var bio = ""
     @State private var selectedInterests: Set<String> = []
     
     private let interests = ["☕ Coffee", "📸 Photography", "🎵 Music", "🏃 Fitness", "📚 Books", "🎨 Art", "🍕 Food", "✈️ Travel", "🎮 Gaming"]
     
     var body: some View {
-            NavigationStack {
-                ScrollView {
-                    VStack(spacing: 24) {
-                        // Header
-                        VStack(spacing: 8) {
-                            Text("Create Profile")
-                                .font(.title)
-                                .fontWeight(.bold)
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Header
+                    VStack(spacing: 8) {
+                        Text("Create Profile")
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                        
+                        Text("Tell us about yourself")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    .padding(.top)
+                    
+                    // Photo Upload
+                    GlassCard {
+                        VStack(spacing: 12) {
+                            Circle()
+                                .fill(Color.white.opacity(0.1))
+                                .frame(width: 100, height: 100)
+                                .overlay(
+                                    Text("📷")
+                                        .font(.system(size: 40))
+                                        .foregroundColor(.white.opacity(0.5))
+                                )
+                            
+                            Text("Tap to add photo")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                    }
+                    
+                    // Form Fields
+                    VStack(spacing: 16) {
+                        TextField("First Name", text: $firstName)
+                            .textFieldStyle(GlassTextFieldStyle())
+                        
+                        TextField("Email", text: $email)
+                            .textFieldStyle(GlassTextFieldStyle())
+                            .keyboardType(.emailAddress)
+                        
+                        SecureField("Password", text: $password)
+                            .textFieldStyle(GlassTextFieldStyle())
+                        
+                        TextField("Bio (Optional)", text: $bio, axis: .vertical)
+                            .textFieldStyle(GlassTextFieldStyle())
+                            .lineLimit(3)
+                    }
+                    
+                    // Interests Selection
+                    GlassCard {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Interests")
+                                .font(.headline)
                                 .foregroundColor(.white)
                             
-                            Text("Tell us about yourself")
-                                .font(.subheadline)
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                        .padding(.top)
-                        
-                        // Photo Upload
-                        GlassCard {
-                            VStack(spacing: 12) {
-                                Circle()
-                                    .fill(Color.white.opacity(0.1))
-                                    .frame(width: 100, height: 100)
-                                    .overlay(
-                                        Text("📷")
-                                            .font(.system(size: 40))
-                                            .foregroundColor(.white.opacity(0.5))
-                                    )
-                                
-                                Text("Tap to add photo")
-                                    .font(.caption)
-                                    .foregroundColor(.white.opacity(0.6))
-                            }
-                        }
-                        
-                        // Form Fields
-                        VStack(spacing: 16) {
-                            TextField("First Name", text: $firstName)
-                                .textFieldStyle(GlassTextFieldStyle())
-                            
-                            TextField("Age", text: $age)
-                                .textFieldStyle(GlassTextFieldStyle())
-                                .keyboardType(.numberPad)
-                            
-                            TextField("Bio (Optional)", text: $bio, axis: .vertical)
-                                .textFieldStyle(GlassTextFieldStyle())
-                                .lineLimit(3)
-                        }
-                        
-                        // Interests Selection
-                        GlassCard {
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text("Interests")
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                
-                                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
-                                    ForEach(interests, id: \.self) { interest in
-                                        InterestTag(
-                                            text: interest,
-                                            isSelected: selectedInterests.contains(interest)
-                                        ) {
-                                            if selectedInterests.contains(interest) {
-                                                selectedInterests.remove(interest)
-                                            } else {
-                                                selectedInterests.insert(interest)
-                                            }
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
+                                ForEach(interests, id: \.self) { interest in
+                                    InterestTag(
+                                        text: interest,
+                                        isSelected: selectedInterests.contains(interest)
+                                    ) {
+                                        if selectedInterests.contains(interest) {
+                                            selectedInterests.remove(interest)
+                                        } else {
+                                            selectedInterests.insert(interest)
                                         }
                                     }
                                 }
                             }
                         }
-                        
-                        Spacer(minLength: 100)
                     }
-                    .padding()
+                    
+                    Spacer(minLength: 100)
                 }
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Cancel") {
-                            dismiss()
-                        }
-                        .foregroundColor(.white)
-                    }
-                }
-                .overlay(
-                    // Fixed Continue Button
-                    VStack {
-                        Spacer()
-                        Button("Continue") {
-                            createAccount()
-                        }
-                        .buttonStyle(GlassButtonStyle())
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(
-                            LinearGradient(
-                                colors: [Color.clear, Color.black.opacity(0.8)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .disabled(!canContinue)
-                        .opacity(canContinue ? 1.0 : 0.6)
-                    }
-                )
+                .padding()
             }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(.white)
+                }
+            }
+            .overlay(
+                // Fixed Continue Button
+                VStack {
+                    Spacer()
+                    Button("Continue") {
+                        createAccount()
+                    }
+                    .buttonStyle(GlassButtonStyle())
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        LinearGradient(
+                            colors: [Color.clear, Color.black.opacity(0.8)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .disabled(!canContinue)
+                    .opacity(canContinue ? 1.0 : 0.6)
+                }
+            )
+        }
     }
     
     private var canContinue: Bool {
-        !firstName.isEmpty && !age.isEmpty && Int(age) != nil
+        !firstName.isEmpty && !email.isEmpty && !password.isEmpty
     }
     
     private func createAccount() {
-        guard let ageInt = Int(age) else { return }
-        
-        authManager.signUp(
-            firstName: firstName,
-            age: ageInt,
-            bio: bio.isEmpty ? "Hello! I'm new to Icebreaker." : bio
-        )
-        
-        dismiss()
+        authManager.signUp(email: email, password: password, firstName: firstName) { success in
+            if success {
+                // Update profile with additional info
+                authManager.updateProfile(bio: bio.isEmpty ? "Hello! I'm new to Icebreaker." : bio, interests: Array(selectedInterests))
+                dismiss()
+            }
+        }
     }
 }
 
@@ -299,5 +301,5 @@ struct InterestTag: View {
 
 #Preview {
     GlassWelcomeView()
-        .environmentObject(AuthManager())
+        .environmentObject(FirebaseAuthManager())
 }

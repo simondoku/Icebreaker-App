@@ -2,13 +2,13 @@ import SwiftUI
 import CoreLocation
 
 class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+    static let shared = LocationManager()
+    
     private let locationManager = CLLocationManager()
     
     @Published var location: CLLocation?
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var isLocationEnabled = false
-    
-    // ADD THESE MISSING PROPERTIES:
     @Published var isVisible: Bool = false
     @Published var visibilityRange: Double = 20.0
     
@@ -17,6 +17,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 5.0
+        authorizationStatus = locationManager.authorizationStatus
     }
     
     func requestLocationPermission() {
@@ -36,7 +37,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         isLocationEnabled = false
     }
     
-    // ADD THIS MISSING METHOD:
     func toggleVisibility() {
         isVisible.toggle()
         if isVisible {
@@ -55,12 +55,14 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        authorizationStatus = status
-        if status == .authorizedWhenInUse || status == .authorizedAlways {
-            isLocationEnabled = true
-            startLocationUpdates()
-        } else {
-            isLocationEnabled = false
+        DispatchQueue.main.async {
+            self.authorizationStatus = status
+            if status == .authorizedWhenInUse || status == .authorizedAlways {
+                self.isLocationEnabled = true
+                self.startLocationUpdates()
+            } else {
+                self.isLocationEnabled = false
+            }
         }
     }
     

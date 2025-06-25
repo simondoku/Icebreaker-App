@@ -1,247 +1,157 @@
 import SwiftUI
+import CoreLocation
 
 struct GlassSettingsView: View {
-    @EnvironmentObject var authManager: AuthManager
-    @EnvironmentObject var questionManager: AIQuestionManager
-    @StateObject private var locationManager = LocationManager()
-    
-    @State private var showingDeleteConfirmation = false
-    @State private var showingSignOutConfirmation = false
-    @State private var showingAnswerHistory = false
+    @EnvironmentObject var authManager: FirebaseAuthManager
+    @State private var showingEditProfile = false
     
     var body: some View {
-            
-            NavigationStack {
-                ScrollView {
-                    VStack(spacing: 20) {
-                        // Profile Section
-                        if let user = authManager.currentUser {
-                            GlassProfileSection(user: user)
-                        }
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Header
+                    VStack(spacing: 8) {
+                        Text("Settings")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
                         
-                        // AI Questions Section
-                        GlassSettingsSection(title: "🧠 AI Questions") {
-                            GlassAIQuestionSettings()
+                        Text("Customize your Icebreaker experience")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    .padding(.top, 20)
+                    
+                    // User Profile Section
+                    if let user = authManager.userProfile {
+                        GlassCard {
+                            VStack(spacing: 16) {
+                                // Avatar
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [.blue, .cyan],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .frame(width: 80, height: 80)
+                                    .overlay(
+                                        Text(user.firstName.prefix(1))
+                                            .font(.system(size: 32, weight: .bold))
+                                            .foregroundColor(.white)
+                                    )
+                                
+                                VStack(spacing: 4) {
+                                    Text(user.firstName)
+                                        .font(.title2)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.white)
+                                    
+                                    Text(user.email)
+                                        .font(.subheadline)
+                                        .foregroundColor(.white.opacity(0.7))
+                                    
+                                    Text("Member since \(user.createdAt.formatted(.dateTime.month().day().year()))")
+                                        .font(.caption)
+                                        .foregroundColor(.white.opacity(0.6))
+                                }
+                                
+                                Button("Edit Profile") {
+                                    showingEditProfile = true
+                                }
+                                .buttonStyle(GlassButtonStyle())
+                            }
                         }
-                        
-                        // Discovery & Privacy Section
-                        GlassSettingsSection(title: "📍 Discovery & Privacy") {
-                            GlassDiscoverySettings(locationManager: locationManager)
+                    }
+                    
+                    // Privacy & Discovery
+                    GlassCard {
+                        VStack(alignment: .leading, spacing: 20) {
+                            Text("Privacy & Discovery")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            SettingsToggle(
+                                title: "Make me discoverable",
+                                subtitle: "Allow others to find you on the radar",
+                                isOn: Binding(
+                                    get: { authManager.userProfile?.isVisible ?? false },
+                                    set: { authManager.updateVisibility(isVisible: $0) }
+                                )
+                            )
+                            
+                            if let userProfile = authManager.userProfile {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text("Visibility Range: \(Int(userProfile.visibilityRange))m")
+                                        .font(.subheadline)
+                                        .foregroundColor(.white)
+                                    
+                                    Slider(
+                                        value: Binding(
+                                            get: { userProfile.visibilityRange },
+                                            set: { authManager.updateVisibilityRange($0) }
+                                        ),
+                                        in: 5...50,
+                                        step: 5
+                                    )
+                                    .accentColor(.cyan)
+                                }
+                            }
                         }
-                        
-                        // Account Section
-                        GlassSettingsSection(title: "⚙️ Account") {
-                            GlassAccountSettings(
-                                showingSignOutConfirmation: $showingSignOutConfirmation,
-                                showingDeleteConfirmation: $showingDeleteConfirmation
+                    }
+                    
+                    // AI Questions Settings
+                    GlassCard {
+                        VStack(alignment: .leading, spacing: 20) {
+                            Text("AI Questions")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            SettingsToggle(
+                                title: "Daily AI Questions",
+                                subtitle: "Get personalized questions to improve matches",
+                                isOn: .constant(true)
+                            )
+                            
+                            SettingsToggle(
+                                title: "Question Reminders",
+                                subtitle: "Notifications when new questions are available",
+                                isOn: .constant(false)
+                            )
+                            
+                            SettingsToggle(
+                                title: "Share AI Insights",
+                                subtitle: "Help others discover compatibility",
+                                isOn: .constant(true)
                             )
                         }
-                        
-                        Spacer(minLength: 100)
                     }
-                    .padding()
-                }
-                .navigationTitle("Settings")
-            }
-        .sheet(isPresented: $showingAnswerHistory) {
-            GlassAnswerHistoryView()
-                .environmentObject(questionManager)
-        }
-        .alert("Sign Out", isPresented: $showingSignOutConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Sign Out", role: .destructive) {
-                authManager.signOut()
-            }
-        } message: {
-            Text("Are you sure you want to sign out?")
-        }
-        .alert("Delete Account", isPresented: $showingDeleteConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                authManager.signOut()
-            }
-        } message: {
-            Text("This will permanently delete your account and all data. This action cannot be undone.")
-        }
-    }
-}
-
-struct GlassProfileSection: View {
-    let user: User
-    
-    var body: some View {
-        GlassCard {
-            HStack(spacing: 15) {
-                Circle()
-                    .fill(LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 80, height: 80)
-                    .overlay(
-                        Text(user.firstName.prefix(1))
-                            .font(.system(size: 32, weight: .bold))
-                            .foregroundColor(.white)
-                    )
-                
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(user.firstName)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
                     
-                    Text("Age \(user.age)")
-                        .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.7))
-                    
-                    if !user.bio.isEmpty {
-                        Text(user.bio)
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.6))
-                            .lineLimit(2)
+                    // Account Actions
+                    GlassCard {
+                        VStack(spacing: 16) {
+                            Button("Sign Out") {
+                                authManager.signOut()
+                            }
+                            .buttonStyle(GlassButtonStyle())
+                            .foregroundColor(.red)
+                        }
                     }
+                    
+                    Spacer(minLength: 100)
                 }
-                
-                Spacer()
-                
-                Button("Edit") {
-                    // Handle edit profile
-                }
-                .buttonStyle(GlassButtonStyle(isSecondary: true))
+                .padding(.horizontal, 20)
             }
+            .navigationBarHidden(true)
+        }
+        .sheet(isPresented: $showingEditProfile) {
+            EditProfileView()
         }
     }
 }
 
-struct GlassSettingsSection<Content: View>: View {
-    let title: String
-    let content: Content
-    
-    init(title: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-                .padding(.horizontal, 4)
-            
-            GlassCard {
-                content
-            }
-        }
-    }
-}
-
-struct GlassAIQuestionSettings: View {
-    @State private var dailyQuestionsEnabled = true
-    @State private var questionReminders = true
-    @State private var shareAIInsights = true
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            GlassSettingsRow(
-                title: "Daily AI Questions",
-                subtitle: "Receive personalized questions to improve matches",
-                isOn: $dailyQuestionsEnabled
-            )
-            
-            Divider().background(Color.white.opacity(0.2))
-            
-            GlassSettingsRow(
-                title: "Question Reminders",
-                subtitle: "Get gentle nudges to answer pending questions",
-                isOn: $questionReminders
-            )
-            
-            Divider().background(Color.white.opacity(0.2))
-            
-            GlassSettingsRow(
-                title: "Share AI Insights",
-                subtitle: "Let others see why you matched in their profile",
-                isOn: $shareAIInsights
-            )
-        }
-    }
-}
-
-struct GlassDiscoverySettings: View {
-    let locationManager: LocationManager
-    @State private var showRecentAnswers = true
-    @State private var autoExpireVisibility = true
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Make me discoverable")
-                        .font(.body)
-                        .foregroundColor(.white)
-                    Text("Allow others to see you when nearby")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.7))
-                }
-                Spacer()
-                GlassToggle(isOn: Binding(
-                    get: { locationManager.isVisible },
-                    set: { _ in locationManager.toggleVisibility() }
-                ))
-            }
-            
-            Divider().background(Color.white.opacity(0.2))
-            
-            GlassSettingsRow(
-                title: "Show Recent Answers",
-                subtitle: "Display your latest responses in your profile",
-                isOn: $showRecentAnswers
-            )
-            
-            Divider().background(Color.white.opacity(0.2))
-            
-            GlassSettingsRow(
-                title: "Auto-expire Visibility",
-                subtitle: "Hide after 30 minutes of inactivity",
-                isOn: $autoExpireVisibility
-            )
-        }
-    }
-}
-
-struct GlassAccountSettings: View {
-    @Binding var showingSignOutConfirmation: Bool
-    @Binding var showingDeleteConfirmation: Bool
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            Button(action: { showingSignOutConfirmation = true }) {
-                HStack {
-                    Text("Sign Out")
-                        .font(.body)
-                        .foregroundColor(.cyan)
-                    Spacer()
-                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                        .foregroundColor(.cyan)
-                }
-            }
-            
-            Divider().background(Color.white.opacity(0.2))
-            
-            Button(action: { showingDeleteConfirmation = true }) {
-                HStack {
-                    Text("Delete Account")
-                        .font(.body)
-                        .foregroundColor(.red)
-                    Spacer()
-                    Image(systemName: "trash")
-                        .foregroundColor(.red)
-                }
-            }
-        }
-    }
-}
-
-struct GlassSettingsRow: View {
+struct SettingsToggle: View {
     let title: String
     let subtitle: String
     @Binding var isOn: Bool
@@ -250,20 +160,111 @@ struct GlassSettingsRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.body)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
                     .foregroundColor(.white)
+                
                 Text(subtitle)
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.7))
             }
+            
             Spacer()
-            GlassToggle(isOn: $isOn)
+            
+            Toggle("", isOn: $isOn)
+                .toggleStyle(SwitchToggleStyle(tint: .cyan))
+        }
+    }
+}
+
+struct EditProfileView: View {
+    @EnvironmentObject var authManager: FirebaseAuthManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var firstName: String = ""
+    @State private var bio: String = ""
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                AnimatedBackground()
+                    .ignoresSafeArea()
+                
+                VStack(spacing: 30) {
+                    VStack(spacing: 12) {
+                        Text("Edit Profile")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                        
+                        Text("Update your profile information")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    .padding(.top, 60)
+                    
+                    VStack(spacing: 20) {
+                        ModernTextField(text: $firstName, placeholder: "First Name", icon: "person")
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 16) {
+                                Image(systemName: "text.alignleft")
+                                    .foregroundColor(.cyan)
+                                    .frame(width: 20)
+                                
+                                Text("Bio")
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                            
+                            TextField("Tell others about yourself...", text: $bio, axis: .vertical)
+                                .foregroundColor(.white)
+                                .padding(.leading, 36)
+                                .lineLimit(3...6)
+                        }
+                        .padding(20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.white.opacity(0.08))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                )
+                        )
+                    }
+                    .padding(.horizontal, 20)
+                    
+                    Spacer()
+                    
+                    VStack(spacing: 16) {
+                        Button("Save Changes") {
+                            authManager.updateProfile(firstName: firstName.isEmpty ? nil : firstName, bio: bio.isEmpty ? nil : bio)
+                            dismiss()
+                        }
+                        .buttonStyle(GlassButtonStyle())
+                        .padding(.horizontal, 20)
+                    }
+                    .padding(.bottom, 50)
+                }
+            }
+            .navigationBarHidden(true)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(.cyan)
+                }
+            }
+        }
+        .onAppear {
+            if let userProfile = authManager.userProfile {
+                firstName = userProfile.firstName
+                bio = userProfile.bio
+            }
         }
     }
 }
 
 #Preview {
     GlassSettingsView()
-        .environmentObject(AuthManager())
-        .environmentObject(AIQuestionManager())
+        .environmentObject(FirebaseAuthManager())
 }

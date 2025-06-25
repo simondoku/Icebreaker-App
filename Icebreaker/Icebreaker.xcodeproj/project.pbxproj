@@ -6,6 +6,16 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		897FEFE82E0C75A8001DD5B7 /* FirebaseAI in Frameworks */ = {isa = PBXBuildFile; productRef = 897FEFE72E0C75A8001DD5B7 /* FirebaseAI */; };
+		897FEFEA2E0C75A8001DD5B7 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 897FEFE92E0C75A8001DD5B7 /* FirebaseAnalytics */; };
+		897FEFEC2E0C75A8001DD5B7 /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = 897FEFEB2E0C75A8001DD5B7 /* FirebaseAnalyticsCore */; };
+		897FEFEE2E0C75A8001DD5B7 /* FirebaseAnalyticsIdentitySupport in Frameworks */ = {isa = PBXBuildFile; productRef = 897FEFED2E0C75A8001DD5B7 /* FirebaseAnalyticsIdentitySupport */; };
+		897FEFF02E0C75A8001DD5B7 /* FirebaseAnalyticsOnDeviceConversion in Frameworks */ = {isa = PBXBuildFile; productRef = 897FEFEF2E0C75A8001DD5B7 /* FirebaseAnalyticsOnDeviceConversion */; };
+		897FEFFB2E0C8802001DD5B7 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 897FEFFA2E0C8802001DD5B7 /* FirebaseAuth */; };
+		897FEFFD2E0C885D001DD5B7 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 897FEFFC2E0C885D001DD5B7 /* FirebaseFirestore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		897FEEDC2E09F998001DD5B7 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -29,9 +39,22 @@
 		897FEEE52E09F998001DD5B7 /* IcebreakerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IcebreakerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		897FEFFF2E0C8DB2001DD5B7 /* Exceptions for "Icebreaker" folder in "Icebreaker" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 897FEEC72E09F997001DD5B7 /* Icebreaker */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		897FEECA2E09F997001DD5B7 /* Icebreaker */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				897FEFFF2E0C8DB2001DD5B7 /* Exceptions for "Icebreaker" folder in "Icebreaker" target */,
+			);
 			path = Icebreaker;
 			sourceTree = "<group>";
 		};
@@ -52,6 +75,13 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				897FEFEE2E0C75A8001DD5B7 /* FirebaseAnalyticsIdentitySupport in Frameworks */,
+				897FEFFB2E0C8802001DD5B7 /* FirebaseAuth in Frameworks */,
+				897FEFEA2E0C75A8001DD5B7 /* FirebaseAnalytics in Frameworks */,
+				897FEFF02E0C75A8001DD5B7 /* FirebaseAnalyticsOnDeviceConversion in Frameworks */,
+				897FEFEC2E0C75A8001DD5B7 /* FirebaseAnalyticsCore in Frameworks */,
+				897FEFE82E0C75A8001DD5B7 /* FirebaseAI in Frameworks */,
+				897FEFFD2E0C885D001DD5B7 /* FirebaseFirestore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +108,7 @@
 				897FEECA2E09F997001DD5B7 /* Icebreaker */,
 				897FEEDE2E09F998001DD5B7 /* IcebreakerTests */,
 				897FEEE82E09F998001DD5B7 /* IcebreakerUITests */,
+				897FEFF92E0C8802001DD5B7 /* Frameworks */,
 				897FEEC92E09F997001DD5B7 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +121,13 @@
 				897FEEE52E09F998001DD5B7 /* IcebreakerUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		897FEFF92E0C8802001DD5B7 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -112,6 +150,13 @@
 			);
 			name = Icebreaker;
 			packageProductDependencies = (
+				897FEFE72E0C75A8001DD5B7 /* FirebaseAI */,
+				897FEFE92E0C75A8001DD5B7 /* FirebaseAnalytics */,
+				897FEFEB2E0C75A8001DD5B7 /* FirebaseAnalyticsCore */,
+				897FEFED2E0C75A8001DD5B7 /* FirebaseAnalyticsIdentitySupport */,
+				897FEFEF2E0C75A8001DD5B7 /* FirebaseAnalyticsOnDeviceConversion */,
+				897FEFFA2E0C8802001DD5B7 /* FirebaseAuth */,
+				897FEFFC2E0C885D001DD5B7 /* FirebaseFirestore */,
 			);
 			productName = Icebreaker;
 			productReference = 897FEEC82E09F997001DD5B7 /* Icebreaker.app */;
@@ -195,6 +240,9 @@
 			);
 			mainGroup = 897FEEBF2E09F997001DD5B7;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 897FEEC92E09F997001DD5B7 /* Products */;
 			projectDirPath = "";
@@ -393,6 +441,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Icebreaker/Info.plist;
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Icebreaker uses location to connect you with people around you";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Icebreaker needs location access to find people nearby for connections";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -432,6 +481,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Icebreaker/Info.plist;
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Icebreaker uses location to connect you with people around you";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Icebreaker needs location access to find people nearby for connections";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -587,6 +637,55 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.15.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		897FEFE72E0C75A8001DD5B7 /* FirebaseAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAI;
+		};
+		897FEFE92E0C75A8001DD5B7 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		897FEFEB2E0C75A8001DD5B7 /* FirebaseAnalyticsCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsCore;
+		};
+		897FEFED2E0C75A8001DD5B7 /* FirebaseAnalyticsIdentitySupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsIdentitySupport;
+		};
+		897FEFEF2E0C75A8001DD5B7 /* FirebaseAnalyticsOnDeviceConversion */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsOnDeviceConversion;
+		};
+		897FEFFA2E0C8802001DD5B7 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		897FEFFC2E0C885D001DD5B7 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 897FEFE62E0C75A8001DD5B7 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 897FEEC02E09F997001DD5B7 /* Project object */;
 }

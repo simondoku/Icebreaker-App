@@ -94,3 +94,11 @@ iOSInjectionProject/
 .vscode/
 .idea/
 
+# Firebase
+GoogleService-Info.plist
+**/GoogleService-Info.plist
+
+# Environment files
+.env
+*.env
+

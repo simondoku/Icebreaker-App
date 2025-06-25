@@ -57,18 +57,6 @@ Build a privacy-first mobile app that helps users connect with people physically
 
 ---
 
-## 🛠️ Tech Stack
-- **Frontend**: React Native (cross-platform)
-- **Backend**: Node.js with Express
-- **Database**: MongoDB or PostgreSQL (for user profiles, messages)
-- **Authentication**: Firebase Auth or Auth0
-- **Nearby Detection**:
-  - GPS (Mapbox/Google Maps API)
-  - BLE (React Native BLE library)
-- **Cloud**: AWS/GCP/Azure for hosting, storage
-
----
-
 ## ✨ Future Enhancements (Post-MVP)
 - AI-generated conversation starters
 - Event-based discovery (e.g., at concerts, conferences)

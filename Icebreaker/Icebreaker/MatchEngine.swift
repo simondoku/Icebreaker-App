@@ -7,7 +7,158 @@
 
 import Foundation
 import CoreLocation
-import SwiftUICore
+import SwiftUI
+import Combine
+
+class MatchEngine: ObservableObject {
+    @Published var nearbyUsers: [NearbyUser] = []
+    @Published var matches: [MatchResult] = []
+    @Published var isScanning = false
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    // MARK: - Demo Data (Replace with Firebase in production)
+    func findMatches(userAnswers: [AIAnswer]) {
+        isScanning = true
+        
+        // Simulate API call
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            self.generateDemoMatches()
+            self.isScanning = false
+        }
+    }
+    
+    private func generateDemoMatches() {
+        // Demo nearby users - in production this would come from Firebase
+        nearbyUsers = [
+            NearbyUser(
+                firstName: "Maya",
+                distance: 12,
+                location: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+                answers: [],
+                isActive: false
+            ),
+            NearbyUser(
+                firstName: "Alex",
+                distance: 8,
+                location: CLLocationCoordinate2D(latitude: 37.7849, longitude: -122.4094),
+                answers: [],
+                isActive: true
+            ),
+            NearbyUser(
+                firstName: "Jordan",
+                distance: 15,
+                location: CLLocationCoordinate2D(latitude: 37.7649, longitude: -122.4294),
+                answers: [],
+                isActive: false
+            ),
+            NearbyUser(
+                firstName: "Sam",
+                distance: 22,
+                location: CLLocationCoordinate2D(latitude: 37.7549, longitude: -122.4394),
+                answers: [],
+                isActive: true
+            )
+        ]
+        
+        // Generate matches from nearby users
+        matches = nearbyUsers.map { user in
+            let compatibility = calculateCompatibility(with: user)
+            let sharedAnswers = generateSharedAnswers(with: user)
+            
+            return MatchResult(
+                user: user,
+                matchPercentage: compatibility,
+                sharedAnswers: sharedAnswers,
+                aiInsight: generateAIInsight(user: user, compatibility: compatibility),
+                conversationStarter: generateConversationStarter(user: user)
+            )
+        }.sorted { $0.matchPercentage > $1.matchPercentage }
+    }
+    
+    private func calculateCompatibility(with user: NearbyUser) -> Double {
+        // Demo compatibility calculation
+        switch user.firstName {
+        case "Alex": return 92.0
+        case "Jordan": return 88.0
+        case "Sam": return 76.0
+        case "Maya": return 45.0
+        default: return Double.random(in: 40...95)
+        }
+    }
+    
+    private func generateSharedAnswers(with user: NearbyUser) -> [MatchResult.SharedAnswer] {
+        // Demo shared answers based on user
+        switch user.firstName {
+        case "Alex":
+            return [
+                MatchResult.SharedAnswer(
+                    questionText: "What book are you reading right now?",
+                    userAnswer: "Atomic Habits - learning about habit stacking",
+                    matchAnswer: "Atomic Habits - the 1% better concept is mind-blowing",
+                    similarity: 0.95
+                ),
+                MatchResult.SharedAnswer(
+                    questionText: "What was the first thing you did this morning?",
+                    userAnswer: "Coffee + 10 minutes of journaling",
+                    matchAnswer: "Made my coffee and wrote in my gratitude journal",
+                    similarity: 0.88
+                )
+            ]
+        case "Jordan":
+            return [
+                MatchResult.SharedAnswer(
+                    questionText: "What's your favorite way to unwind?",
+                    userAnswer: "Meditation and nature walks",
+                    matchAnswer: "Daily meditation practice, love hiking trails",
+                    similarity: 0.92
+                )
+            ]
+        case "Sam":
+            return [
+                MatchResult.SharedAnswer(
+                    questionText: "What motivates you to stay active?",
+                    userAnswer: "Morning runs give me energy for the day",
+                    matchAnswer: "Running is my therapy, especially in the morning",
+                    similarity: 0.85
+                )
+            ]
+        default:
+            return []
+        }
+    }
+    
+    private func generateAIInsight(user: NearbyUser, compatibility: Double) -> String {
+        if compatibility > 85 {
+            return "Strong compatibility based on shared interests and values"
+        } else if compatibility > 70 {
+            return "Good connection potential with overlapping interests"
+        } else if compatibility > 50 {
+            return "Some shared elements that could lead to interesting conversations"
+        } else {
+            return "Different perspectives that might create engaging discussions"
+        }
+    }
+    
+    private func generateConversationStarter(user: NearbyUser) -> String {
+        switch user.firstName {
+        case "Alex":
+            return "Hey! I saw you're also reading Atomic Habits. Which habit are you working on building right now? I'm trying to get consistent with my morning routine!"
+        case "Jordan":
+            return "Hi there! I noticed we both practice meditation. Have you tried any hiking meditation spots around here?"
+        case "Sam":
+            return "Hello! Fellow morning runner here! What's your favorite route in the area?"
+        case "Maya":
+            return "Hey! I see we're both interested in fitness. What's your favorite workout these days?"
+        default:
+            return "Hey \(user.firstName)! Nice to meet someone nearby. How's your day going?"
+        }
+    }
+    
+    func stopScanning() {
+        isScanning = false
+    }
+}
 
 struct NearbyUser: Identifiable {
     let id = UUID()
@@ -77,143 +228,5 @@ struct MatchResult: Identifiable {
             case .low: return "Some Overlap"
             }
         }
-    }
-}
-
-class MatchEngine: ObservableObject {
-    @Published var nearbyUsers: [NearbyUser] = []
-    @Published var matches: [MatchResult] = []
-    
-    // Sample users with realistic answers
-    private let sampleUsers: [NearbyUser] = [
-        NearbyUser(
-            firstName: "Alex",
-            distance: 8,
-            location: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-            answers: [
-                AIAnswer(questionId: UUID(), text: "Reading Atomic Habits - the 1% better concept is mind-blowing"),
-                AIAnswer(questionId: UUID(), text: "Coffee and 10 minutes of journaling"),
-                AIAnswer(questionId: UUID(), text: "Building a consistent morning routine")
-            ],
-            isActive: true
-        ),
-        NearbyUser(
-            firstName: "Sam",
-            distance: 15,
-            location: CLLocationCoordinate2D(latitude: 37.7849, longitude: -122.4094),
-            answers: [
-                AIAnswer(questionId: UUID(), text: "Tried this amazing Thai place yesterday"),
-                AIAnswer(questionId: UUID(), text: "Meditation and green tea"),
-                AIAnswer(questionId: UUID(), text: "Learning guitar")
-            ],
-            isActive: true
-        ),
-        NearbyUser(
-            firstName: "Jordan",
-            distance: 12,
-            location: CLLocationCoordinate2D(latitude: 37.7649, longitude: -122.4294),
-            answers: [
-                AIAnswer(questionId: UUID(), text: "Just finished a 5K run"),
-                AIAnswer(questionId: UUID(), text: "Protein smoothie and stretching"),
-                AIAnswer(questionId: UUID(), text: "Getting consistent with workouts")
-            ],
-            isActive: false
-        ),
-        NearbyUser(
-            firstName: "Maya",
-            distance: 18,
-            location: CLLocationCoordinate2D(latitude: 37.7549, longitude: -122.4394),
-            answers: [
-                AIAnswer(questionId: UUID(), text: "Sketching in my notebook"),
-                AIAnswer(questionId: UUID(), text: "Earl grey tea while reading"),
-                AIAnswer(questionId: UUID(), text: "Improving my drawing skills")
-            ],
-            isActive: true
-        )
-    ]
-    
-    func findMatches(userAnswers: [AIAnswer]) {
-        nearbyUsers = sampleUsers
-        
-        matches = nearbyUsers.map { user in
-            let matchData = calculateMatch(userAnswers: userAnswers, otherAnswers: user.answers)
-            
-            return MatchResult(
-                user: user,
-                matchPercentage: matchData.percentage,
-                sharedAnswers: matchData.sharedAnswers,
-                aiInsight: generateAIInsight(user: user, matchData: matchData),
-                conversationStarter: generateConversationStarter(user: user, matchData: matchData)
-            )
-        }.sorted { $0.matchPercentage > $1.matchPercentage }
-    }
-    
-    private func calculateMatch(userAnswers: [AIAnswer], otherAnswers: [AIAnswer]) -> (percentage: Double, sharedAnswers: [MatchResult.SharedAnswer]) {
-        guard !userAnswers.isEmpty && !otherAnswers.isEmpty else {
-            return (0, [])
-        }
-        
-        var sharedAnswers: [MatchResult.SharedAnswer] = []
-        var totalSimilarity = 0.0
-        
-        // Simple keyword matching for demo
-        for userAnswer in userAnswers {
-            for otherAnswer in otherAnswers {
-                let similarity = calculateTextSimilarity(userAnswer.text, otherAnswer.text)
-                if similarity > 0.1 { // Threshold for considering it a match
-                    sharedAnswers.append(MatchResult.SharedAnswer(
-                        questionText: "Recent activity",
-                        userAnswer: userAnswer.text,
-                        matchAnswer: otherAnswer.text,
-                        similarity: similarity
-                    ))
-                    totalSimilarity += similarity
-                }
-            }
-        }
-        
-        let percentage = min(totalSimilarity * 100, 95) // Cap at 95% for realism
-        return (percentage, sharedAnswers)
-    }
-    
-    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
-        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        
-        let commonWords = words1.intersection(words2)
-        let totalWords = words1.union(words2)
-        
-        // Boost similarity for meaningful keywords
-        let meaningfulWords = ["reading", "coffee", "morning", "routine", "habits", "meditation", "exercise", "learning"]
-        let meaningfulMatches = commonWords.intersection(Set(meaningfulWords))
-        
-        let baseSimilarity = totalWords.isEmpty ? 0 : Double(commonWords.count) / Double(totalWords.count)
-        let boost = Double(meaningfulMatches.count) * 0.2
-        
-        return min(baseSimilarity + boost, 1.0)
-    }
-    
-    private func generateAIInsight(user: NearbyUser, matchData: (percentage: Double, sharedAnswers: [MatchResult.SharedAnswer])) -> String {
-        if matchData.percentage > 80 {
-            return "Strong compatibility based on shared interests in personal development and routines"
-        } else if matchData.percentage > 60 {
-            return "Good connection potential with some overlapping interests"
-        } else {
-            return "Different perspectives might lead to interesting conversations"
-        }
-    }
-    
-    private func generateConversationStarter(user: NearbyUser, matchData: (percentage: Double, sharedAnswers: [MatchResult.SharedAnswer])) -> String {
-        if let topMatch = matchData.sharedAnswers.first {
-            if topMatch.userAnswer.contains("coffee") || topMatch.matchAnswer.contains("coffee") {
-                return "I see you're also into coffee! What's your favorite morning brew?"
-            } else if topMatch.userAnswer.contains("reading") || topMatch.matchAnswer.contains("reading") {
-                return "Fellow reader! What book has changed your perspective recently?"
-            } else if topMatch.userAnswer.contains("routine") || topMatch.matchAnswer.contains("routine") {
-                return "I'm working on building better routines too. What's been most helpful for you?"
-            }
-        }
-        
-        return "Hey! I noticed we have some interesting things in common. What brings you to this area?"
     }
 }
