@@ -398,8 +398,14 @@ class AIDebugManager: ObservableObject {
     @Published var lastError: String?
     
     private let aiService = AIService.shared
-    private let matchEngine = MatchEngine()
+    @MainActor private var matchEngine: MatchEngine?
     private var cancellables = Set<AnyCancellable>()
+    
+    init() {
+        Task { @MainActor in
+            self.matchEngine = MatchEngine()
+        }
+    }
     
     func testQuestionGeneration(category: AIQuestion.QuestionCategory) {
         isTestingQuestion = true
@@ -471,7 +477,7 @@ class AIDebugManager: ObservableObject {
         .store(in: &cancellables)
     }
     
-    func testMatchEngine() {
+    @MainActor func testMatchEngine() {
         isTestingMatches = true
         
         let sampleAnswers = [
@@ -479,10 +485,10 @@ class AIDebugManager: ObservableObject {
             AIAnswer(questionId: UUID(), text: "Coffee is my morning ritual")
         ]
         
-        matchEngine.findMatches(userAnswers: sampleAnswers)
+        matchEngine?.findMatches(userAnswers: sampleAnswers)
         
         // Monitor match engine state
-        matchEngine.$matches
+        matchEngine?.$matches
             .sink { [weak self] matches in
                 DispatchQueue.main.async {
                     self?.testMatches = matches

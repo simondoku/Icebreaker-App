@@ -1,13 +1,14 @@
 import SwiftUI
 import CoreLocation
 import UserNotifications
+import Firebase
 
 @main
 struct IcebreakerApp: App {
     
     init() {
-        // Firebase will be initialized when properly configured
-        // FirebaseApp.configure()
+        // Initialize Firebase
+        FirebaseApp.configure()
     }
     
     var body: some Scene {

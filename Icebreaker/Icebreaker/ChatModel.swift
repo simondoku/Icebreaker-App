@@ -6,6 +6,12 @@
 //
 
 import Foundation
+import SwiftUI
+
+// MARK: - Missing Types for Chat System
+
+// MARK: - Nearby User Type (Legacy compatibility)
+typealias NearbyUser = User
 
 struct ChatMessage: Identifiable, Codable {
     var id = UUID()
@@ -14,12 +20,14 @@ struct ChatMessage: Identifiable, Codable {
     let text: String
     let timestamp: Date
     var isRead: Bool = false
+    var isFromCurrentUser: Bool = false // Add missing property
     
-    init(senderId: String, senderName: String, text: String) {
+    init(senderId: String, senderName: String, text: String, isFromCurrentUser: Bool = false) {
         self.senderId = senderId
         self.senderName = senderName
         self.text = text
         self.timestamp = Date()
+        self.isFromCurrentUser = isFromCurrentUser
     }
 }
 
@@ -63,7 +71,7 @@ class ChatManager: ObservableObject {
     // Create a new conversation
     func startConversation(with user: NearbyUser, aiStarter: String) -> Conversation {
         let conversation = Conversation(
-            participantIds: [currentUserId, user.id.uuidString],
+            participantIds: [currentUserId, user.id],
             participantNames: ["You", user.firstName],
             messages: [],
             lastMessageTimestamp: Date()

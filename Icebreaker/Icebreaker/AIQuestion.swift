@@ -2,6 +2,10 @@ import Foundation
 import SwiftUI
 import Combine
 
+// MARK: - Forward declare CompatibilityAnalysis to avoid ambiguity
+// This is defined in AIService.swift
+typealias AICompatibilityAnalysis = CompatibilityAnalysis
+
 // MARK: - AI Question Models
 struct AIQuestion: Identifiable, Codable {
     let id: UUID

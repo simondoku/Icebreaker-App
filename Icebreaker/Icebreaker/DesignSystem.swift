@@ -93,6 +93,70 @@ struct AnimatedBackground: View {
         )
     }
 }
+
+// MARK: - Missing UI Components
+
+// MARK: - Glass Card Component
+struct GlassCard<Content: View>: View {
+    let content: Content
+    let padding: CGFloat
+    
+    init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+        self.content = content()
+        self.padding = padding
+    }
+    
+    var body: some View {
+        content
+            .padding(padding)
+            .glassMorphism()
+    }
+}
+
+// MARK: - Match Percentage Badge
+struct MatchPercentageBadge: View {
+    let percentage: Double
+    let size: CGFloat
+    
+    private var color: Color {
+        switch percentage {
+        case 80...100: return .green
+        case 60..<80: return .orange
+        default: return .red
+        }
+    }
+    
+    var body: some View {
+        Text("\(Int(percentage))%")
+            .font(.system(size: size * 0.3, weight: .bold))
+            .foregroundColor(.white)
+            .frame(width: size, height: size)
+            .background(
+                Circle()
+                    .fill(color)
+                    .shadow(color: color, radius: 4)
+            )
+    }
+}
+
+// MARK: - Status Indicator
+struct StatusIndicator: View {
+    let isActive: Bool
+    
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(isActive ? Color.green : Color.orange)
+                .frame(width: 8, height: 8)
+                .shadow(color: isActive ? .green : .orange, radius: 4)
+            
+            Text(isActive ? "Active now" : "Away")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.8))
+        }
+    }
+}
+
 // MARK: - Glass Button Style
 struct GlassButtonStyle: ButtonStyle {
     let isSecondary: Bool
@@ -133,8 +197,9 @@ struct GlassButtonStyle: ButtonStyle {
 struct GlassTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
         configuration
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .foregroundColor(.white)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 16)
                     .fill(Color.white.opacity(0.08))
@@ -142,178 +207,6 @@ struct GlassTextFieldStyle: TextFieldStyle {
                         RoundedRectangle(cornerRadius: 16)
                             .stroke(Color.white.opacity(0.2), lineWidth: 1)
                     )
-            )
-            .foregroundColor(.white)
-    }
-}
-
-// MARK: - Pulsing Dot Animation
-struct PulsingDot: View {
-    let color: Color
-    let size: CGFloat
-    @State private var isPulsing = false
-    
-    var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: size, height: size)
-            .shadow(color: color, radius: isPulsing ? 8 : 4)
-            .scaleEffect(isPulsing ? 1.2 : 1.0)
-            .animation(
-                .easeInOut(duration: 1.5)
-                .repeatForever(autoreverses: true),
-                value: isPulsing
-            )
-            .onAppear {
-                isPulsing = true
-            }
-    }
-}
-
-// MARK: - Status Indicator
-struct StatusIndicator: View {
-    let isActive: Bool
-    
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(isActive ? Color.green : Color.orange)
-                .frame(width: 8, height: 8)
-                .shadow(color: isActive ? .green : .orange, radius: 4)
-            
-            Text(isActive ? "Active now" : "Away")
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.8))
-        }
-    }
-}
-
-// MARK: - Glass Card
-struct GlassCard<Content: View>: View {
-    let content: Content
-    let padding: CGFloat
-    
-    init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
-        self.content = content()
-        self.padding = padding
-    }
-    
-    var body: some View {
-        content
-            .padding(padding)
-            .glassMorphism()
-    }
-}
-
-// MARK: - Modern Radar Sweep Animation
-struct RadarSweepView: View {
-    @State private var sweepAngle: Double = 0
-    let isActive: Bool
-    
-    var body: some View {
-        ZStack {
-            // Outer container with subtle glow
-            Circle()
-                .fill(Color.clear)
-                .frame(width: 280, height: 280)
-                .background(
-                    Circle()
-                        .fill(RadialGradient(
-                            colors: [
-                                Color.cyan.opacity(0.1),
-                                Color.cyan.opacity(0.05),
-                                Color.black.opacity(0.1)
-                            ],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: 140
-                        ))
-                )
-                .overlay(
-                    Circle()
-                        .stroke(Color.cyan.opacity(0.2), lineWidth: 2)
-                )
-            
-            // Grid lines (8 directional lines)
-            ForEach(0..<8) { index in
-                Rectangle()
-                    .fill(Color.cyan.opacity(0.15))
-                    .frame(width: 1, height: 140)
-                    .offset(y: -70)
-                    .rotationEffect(.degrees(Double(index) * 45))
-            }
-            
-            // Concentric circles
-            ForEach([60, 120, 180, 240], id: \.self) { diameter in
-                Circle()
-                    .stroke(Color.cyan.opacity(0.15), lineWidth: 1)
-                    .frame(width: CGFloat(diameter), height: CGFloat(diameter))
-            }
-            
-            // Radar sweep effect
-            if isActive {
-                Circle()
-                    .fill(AngularGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: Color.clear, location: 0.0),
-                            .init(color: Color.cyan.opacity(0.3), location: 0.2),
-                            .init(color: Color.cyan.opacity(0.6), location: 0.3),
-                            .init(color: Color.clear, location: 0.4)
-                        ]),
-                        center: .center,
-                        startAngle: .degrees(0),
-                        endAngle: .degrees(360)
-                    ))
-                    .frame(width: 240, height: 240)
-                    .rotationEffect(.degrees(sweepAngle))
-                    .mask(Circle().frame(width: 240, height: 240))
-                    .onAppear {
-                        withAnimation(.linear(duration: 3).repeatForever(autoreverses: false)) {
-                            sweepAngle = 360
-                        }
-                    }
-            }
-            
-            // Center dot
-            Circle()
-                .fill(Color.cyan)
-                .frame(width: 8, height: 8)
-                .shadow(color: .cyan, radius: 4)
-                .overlay(
-                    Circle()
-                        .stroke(Color.cyan.opacity(0.5), lineWidth: 2)
-                        .frame(width: 16, height: 16)
-                        .scaleEffect(isActive ? 1.2 : 1.0)
-                        .opacity(isActive ? 0.6 : 1.0)
-                        .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: isActive)
-                )
-        }
-        .frame(width: 280, height: 280)
-    }
-}
-
-// MARK: - Match Percentage Badge
-struct MatchPercentageBadge: View {
-    let percentage: Double
-    let size: CGFloat
-    
-    private var color: Color {
-        switch percentage {
-        case 80...100: return .green
-        case 60..<80: return .orange
-        default: return .red
-        }
-    }
-    
-    var body: some View {
-        Text("\(Int(percentage))%")
-            .font(.system(size: size * 0.3, weight: .bold))
-            .foregroundColor(.white)
-            .frame(width: size, height: size)
-            .background(
-                Circle()
-                    .fill(color)
-                    .shadow(color: color, radius: 4)
             )
     }
 }
@@ -339,6 +232,114 @@ struct TypingIndicator: View {
         }
         .onAppear {
             animationOffset = -4
+        }
+    }
+}
+
+// MARK: - Enhanced Radar Sweep View
+struct RadarSweepView: View {
+    @State private var sweepAngle: Double = 0
+    let isActive: Bool
+    
+    var body: some View {
+        ZStack {
+            // Outer container with subtle glow
+            Circle()
+                .fill(Color.clear)
+                .frame(width: 280, height: 280)
+                .background(
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [
+                                Color.cyan.opacity(0.1),
+                                Color.cyan.opacity(0.05),
+                                Color.black.opacity(0.1)
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 140
+                        ))
+                )
+                .overlay(
+                    Circle()
+                        .stroke(Color.cyan.opacity(0.3), lineWidth: 2)
+                )
+                .overlay(
+                    // Concentric circles
+                    Group {
+                        Circle()
+                            .stroke(Color.cyan.opacity(0.2), lineWidth: 1)
+                            .frame(width: 200, height: 200)
+                        
+                        Circle()
+                            .stroke(Color.cyan.opacity(0.15), lineWidth: 1)
+                            .frame(width: 120, height: 120)
+                        
+                        Circle()
+                            .stroke(Color.cyan.opacity(0.1), lineWidth: 1)
+                            .frame(width: 40, height: 40)
+                    }
+                )
+                .overlay(
+                    // Gradient sweep fan (the blue gradient section you see in the image)
+                    Path { path in
+                        let center = CGPoint(x: 140, y: 140)
+                        path.move(to: center)
+                        path.addArc(
+                            center: center,
+                            radius: 140,
+                            startAngle: .degrees(-30),
+                            endAngle: .degrees(30),
+                            clockwise: false
+                        )
+                        path.closeSubpath()
+                    }
+                    .fill(
+                        AngularGradient(
+                            colors: [
+                                Color.clear,
+                                Color.cyan.opacity(0.1),
+                                Color.cyan.opacity(0.3),
+                                Color.cyan.opacity(0.5),
+                                Color.cyan.opacity(0.3),
+                                Color.cyan.opacity(0.1),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startAngle: .degrees(-30),
+                            endAngle: .degrees(30)
+                        )
+                    )
+                    .rotationEffect(.degrees(sweepAngle), anchor: .center)
+                    .opacity(isActive ? 0.8 : 0.3)
+                )
+                .overlay(
+                    // Sweep line
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.cyan.opacity(0.8),
+                                    Color.cyan.opacity(0.4),
+                                    Color.clear
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: 140, height: 2)
+                        .offset(x: 70)
+                        .rotationEffect(.degrees(sweepAngle))
+                        .opacity(isActive ? 0.6 : 1.0)
+                )
+        }
+        .frame(width: 280, height: 280)
+        .onAppear {
+            if isActive {
+                withAnimation(.linear(duration: 3).repeatForever(autoreverses: false)) {
+                    sweepAngle = 360
+                }
+            }
         }
     }
 }

@@ -1,26 +1,34 @@
 import Foundation
 import Combine
 
+// MARK: - Compatibility Analysis Model
+struct CompatibilityAnalysis {
+    let score: Double
+    let reason: String
+    let sharedTopics: [String]
+    
+    init(score: Double, reason: String, sharedTopics: [String]) {
+        self.score = score
+        self.reason = reason
+        self.sharedTopics = sharedTopics
+    }
+}
+
 // MARK: - AI Service Configuration
 enum AIProvider {
     case deepseek
-    case openai
     
     var baseURL: String {
         switch self {
         case .deepseek:
             return "https://api.deepseek.com"
-        case .openai:
-            return "https://api.openai.com/v1"
         }
     }
     
     var model: String {
         switch self {
         case .deepseek:
-            return "deepseek-chat" // Updated to match DeepSeek docs
-        case .openai:
-            return "gpt-3.5-turbo"
+            return "deepseek-chat"
         }
     }
 }
@@ -70,19 +78,41 @@ struct AIUsage: Codable {
     }
 }
 
-// MARK: - Alternative Response Formats
-struct DeepSeekResponse: Codable {
-    let choices: [DeepSeekChoice]
-    let usage: AIUsage?
+// MARK: - API Error Response
+struct APIErrorResponse: Codable {
+    let error: APIError
 }
 
-struct DeepSeekChoice: Codable {
-    let message: AIMessage
-    let finishReason: String?
+struct APIError: Codable {
+    let message: String
+    let type: String
+    let code: String
+}
+
+// MARK: - AI Service Errors
+enum AIServiceError: Error, LocalizedError {
+    case invalidURL
+    case invalidAPIKey
+    case insufficientBalance
+    case apiError(String)
+    case noResponse
+    case networkError(Error)
     
-    enum CodingKeys: String, CodingKey {
-        case message
-        case finishReason = "finish_reason"
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Invalid API URL"
+        case .invalidAPIKey:
+            return "Invalid API key"
+        case .insufficientBalance:
+            return "Insufficient API balance"
+        case .apiError(let message):
+            return "API Error: \(message)"
+        case .noResponse:
+            return "No response from AI service"
+        case .networkError(let error):
+            return "Network error: \(error.localizedDescription)"
+        }
     }
 }
 
@@ -90,10 +120,10 @@ struct DeepSeekChoice: Codable {
 class AIService: ObservableObject {
     static let shared = AIService()
     
-    private let provider: AIProvider = .deepseek // Switch back to DeepSeek with correct config
+    private let provider: AIProvider = .deepseek
     private var apiKey: String {
         // In production, store this securely in Keychain or environment variables
-        return Bundle.main.object(forInfoDictionaryKey: "AI_API_KEY") as? String ?? "your-api-key-here"
+        return Bundle.main.object(forInfoDictionaryKey: "AI_API_KEY") as? String ?? "your-deepseek-api-key-here"
     }
     
     private let session = URLSession.shared
@@ -202,6 +232,87 @@ class AIService: ObservableObject {
             .eraseToAnyPublisher()
     }
     
+    // MARK: - Generate Context-Aware Chat Suggestions
+    func generateChatSuggestions(
+        conversationHistory: [ChatMessage],
+        userProfile: User?,
+        matchProfile: User?
+    ) -> AnyPublisher<[String], Error> {
+        
+        // Check if AI suggestions are enabled
+        guard UserDefaults.standard.bool(forKey: "ai_suggestions_enabled") else {
+            return Just([]).setFailureType(to: Error.self).eraseToAnyPublisher()
+        }
+        
+        let prompt = buildChatSuggestionsPrompt(
+            conversationHistory: conversationHistory,
+            userProfile: userProfile,
+            matchProfile: matchProfile
+        )
+        
+        return makeAIRequest(prompt: prompt, maxTokens: 300)
+            .map { response in
+                let content = response.choices.first?.message.content ?? ""
+                return self.parseChatSuggestions(content)
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Generate Smart Conversation Starters
+    func generateSmartConversationStarter(
+        userProfile: User?,
+        matchProfile: User?,
+        sharedInterests: [String] = []
+    ) -> AnyPublisher<String, Error> {
+        
+        // Check if smart starters are enabled
+        guard UserDefaults.standard.bool(forKey: "smart_starters_enabled") else {
+            return Just("Hey! How's your day going?").setFailureType(to: Error.self).eraseToAnyPublisher()
+        }
+        
+        let prompt = buildSmartStarterPrompt(
+            userProfile: userProfile,
+            matchProfile: matchProfile,
+            sharedInterests: sharedInterests
+        )
+        
+        return makeAIRequest(prompt: prompt, maxTokens: 200)
+            .map { response in
+                response.choices.first?.message.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Hey! How's your day going?"
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Chat Suggestions for Chat Manager
+    func generateChatSuggestions(for chatHistory: [ChatMessage], partnerUser: User) async throws -> [String] {
+        let prompt = buildChatSuggestionsPrompt(
+            chatHistory: chatHistory,
+            partnerUser: partnerUser
+        )
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            makeAIRequest(prompt: prompt, maxTokens: 300)
+                .map { response in
+                    let content = response.choices.first?.message.content ?? ""
+                    return self.parseChatSuggestions(content)
+                }
+                .sink(
+                    receiveCompletion: { completion in
+                        switch completion {
+                        case .finished:
+                            break
+                        case .failure(let error):
+                            continuation.resume(throwing: error)
+                        }
+                    },
+                    receiveValue: { suggestions in
+                        continuation.resume(returning: suggestions)
+                    }
+                )
+                .store(in: &cancellables)
+        }
+    }
+    
     // MARK: - Private Helper Methods
     private func makeAIRequest(prompt: String, maxTokens: Int = 500) -> AnyPublisher<AIResponse, Error> {
         guard let url = URL(string: "\(provider.baseURL)/chat/completions") else {
@@ -236,7 +347,7 @@ class AIService: ObservableObject {
             .handleEvents(receiveOutput: { data in
                 // Debug: Print the raw response to understand the structure
                 if let jsonString = String(data: data, encoding: .utf8) {
-                    print("🔍 AI API Response: \(jsonString)")
+                    print("🔍 DeepSeek API Response: \(jsonString)")
                 }
             })
             .tryMap { data -> AIResponse in
@@ -256,23 +367,9 @@ class AIService: ObservableObject {
                     }
                 }
                 
-                // Try to decode as standard OpenAI format first
+                // Try to decode as standard response format
                 if let response = try? JSONDecoder().decode(AIResponse.self, from: data) {
                     return response
-                }
-                
-                // If that fails, try DeepSeek format
-                if let deepseekResponse = try? JSONDecoder().decode(DeepSeekResponse.self, from: data) {
-                    return AIResponse(
-                        choices: [AIChoice(
-                            message: AIMessage(
-                                role: "assistant", 
-                                content: deepseekResponse.choices.first?.message.content ?? ""
-                            ),
-                            finishReason: deepseekResponse.choices.first?.finishReason
-                        )],
-                        usage: deepseekResponse.usage
-                    )
                 }
                 
                 // Try parsing alternative formats
@@ -423,6 +520,149 @@ class AIService: ObservableObject {
         """
     }
     
+    private func buildChatSuggestionsPrompt(
+        conversationHistory: [ChatMessage],
+        userProfile: User?,
+        matchProfile: User?
+    ) -> String {
+        var prompt = """
+        Generate 3 contextually relevant, engaging conversation suggestions based on the chat history and user profiles. 
+        
+        Instructions:
+        - Keep suggestions natural and conversational
+        - Build on the current conversation flow
+        - Consider shared interests and compatibility
+        - Avoid repetitive or generic responses
+        - Each suggestion should be 10-20 words max
+        - Return suggestions separated by newlines, no numbering
+        
+        """
+        
+        // Add user profile context
+        if let user = userProfile {
+            prompt += "\nUser Profile:\n"
+            prompt += "- Age: \(user.age)\n"
+            if !user.bio.isEmpty {
+                prompt += "- Bio: \(user.bio)\n"
+            }
+            if !user.interests.isEmpty {
+                prompt += "- Interests: \(user.interests.joined(separator: ", "))\n"
+            }
+        }
+        
+        // Add match profile context
+        if let match = matchProfile {
+            prompt += "\nMatch Profile:\n"
+            prompt += "- Age: \(match.age)\n"
+            if !match.bio.isEmpty {
+                prompt += "- Bio: \(match.bio)\n"
+            }
+            if !match.interests.isEmpty {
+                prompt += "- Interests: \(match.interests.joined(separator: ", "))\n"
+            }
+        }
+        
+        // Add recent conversation context
+        prompt += "\nRecent Conversation:\n"
+        let recentMessages = Array(conversationHistory.suffix(6)) // Last 6 messages for context
+        
+        if recentMessages.isEmpty {
+            prompt += "No conversation yet - this would be the first message.\n"
+        } else {
+            for message in recentMessages {
+                let sender = message.isFromCurrentUser ? "User" : "Match"
+                prompt += "\(sender): \(message.text)\n"
+            }
+        }
+        
+        prompt += "\nGenerate 3 contextual suggestions:"
+        
+        return prompt
+    }
+    
+    private func buildChatSuggestionsPrompt(
+        chatHistory: [ChatMessage],
+        partnerUser: User
+    ) -> String {
+        var prompt = """
+        Generate 3 contextually relevant, engaging conversation suggestions based on the chat history and partner profile. 
+        
+        Instructions:
+        - Keep suggestions natural and conversational
+        - Build on the current conversation flow
+        - Consider partner's interests and profile
+        - Avoid repetitive or generic responses
+        - Each suggestion should be 10-20 words max
+        - Return suggestions separated by newlines, no numbering
+        
+        """
+        
+        // Add partner profile context
+        prompt += "\nPartner Profile:\n"
+        prompt += "- Name: \(partnerUser.name)\n"
+        prompt += "- Age: \(partnerUser.age)\n"
+        if !partnerUser.bio.isEmpty {
+            prompt += "- Bio: \(partnerUser.bio)\n"
+        }
+        if !partnerUser.interests.isEmpty {
+            prompt += "- Interests: \(partnerUser.interests.joined(separator: ", "))\n"
+        }
+        
+        // Add recent conversation context
+        prompt += "\nRecent Conversation:\n"
+        let recentMessages = Array(chatHistory.suffix(6)) // Last 6 messages for context
+        
+        if recentMessages.isEmpty {
+            prompt += "No conversation yet - this would be the first message.\n"
+        } else {
+            for message in recentMessages {
+                let sender = message.isFromCurrentUser ? "User" : partnerUser.name
+                prompt += "\(sender): \(message.text)\n"
+            }
+        }
+        
+        prompt += "\nGenerate 3 contextual suggestions:"
+        
+        return prompt
+    }
+    
+    private func buildSmartStarterPrompt(
+        userProfile: User?,
+        matchProfile: User?,
+        sharedInterests: [String]
+    ) -> String {
+        var prompt = """
+        Generate a personalized, engaging conversation starter based on the profiles and shared interests.
+        
+        Requirements:
+        - Natural and friendly tone
+        - Reference shared interests when possible
+        - Avoid generic "how are you" messages
+        - Keep it under 20 words
+        - Make it a question or engaging statement
+        
+        """
+        
+        if !sharedInterests.isEmpty {
+            prompt += "\nShared Interests: \(sharedInterests.joined(separator: ", "))\n"
+        }
+        
+        if let user = userProfile {
+            prompt += "\nUser Interests: \(user.interests.joined(separator: ", "))\n"
+        }
+        
+        if let match = matchProfile {
+            prompt += "\nMatch Interests: \(match.interests.joined(separator: ", "))\n"
+            if !match.bio.isEmpty {
+                prompt += "Match Bio: \(match.bio)\n"
+            }
+        }
+        
+        prompt += "\nGenerate one personalized conversation starter:"
+        
+        return prompt
+    }
+    
     private func parseCompatibilityResponse(_ response: String) -> CompatibilityAnalysis {
         let lines = response.components(separatedBy: .newlines)
         var score: Double = 50.0
@@ -443,43 +683,40 @@ class AIService: ObservableObject {
         
         return CompatibilityAnalysis(score: score, reason: reason, sharedTopics: topics)
     }
-}
-
-// MARK: - Supporting Types
-struct CompatibilityAnalysis {
-    let score: Double
-    let reason: String
-    let sharedTopics: [String]
-}
-
-enum AIServiceError: Error, LocalizedError {
-    case invalidURL
-    case noResponse
-    case invalidAPIKey
-    case insufficientBalance
-    case apiError(String)
     
-    var errorDescription: String? {
-        switch self {
-        case .invalidURL:
-            return "Invalid API URL"
-        case .noResponse:
-            return "No response from AI service"
-        case .invalidAPIKey:
-            return "Invalid API key"
-        case .insufficientBalance:
-            return "Insufficient balance for API request"
-        case .apiError(let message):
-            return "API error: \(message)"
+    private func parseChatSuggestions(_ content: String) -> [String] {
+        let suggestions = content
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("1.") && !$0.hasPrefix("2.") && !$0.hasPrefix("3.") }
+            .map { suggestion in
+                // Remove common prefixes like "- ", "• ", numbers, etc.
+                var cleaned = suggestion
+                if cleaned.hasPrefix("- ") {
+                    cleaned = String(cleaned.dropFirst(2))
+                }
+                if cleaned.hasPrefix("• ") {
+                    cleaned = String(cleaned.dropFirst(2))
+                }
+                // Remove number prefixes like "1. ", "2. ", etc.
+                if let range = cleaned.range(of: #"^\d+\.\s*"#, options: .regularExpression) {
+                    cleaned = String(cleaned[range.upperBound...])
+                }
+                return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { !$0.isEmpty }
+        
+        // Return up to 3 suggestions, with fallbacks if needed
+        let maxSuggestions = min(3, suggestions.count)
+        if maxSuggestions > 0 {
+            return Array(suggestions.prefix(maxSuggestions))
+        } else {
+            // Fallback suggestions if parsing fails
+            return [
+                "That's interesting! Tell me more about that.",
+                "I'd love to hear your thoughts on this.",
+                "What's been the highlight of your day?"
+            ]
         }
     }
-}
-
-struct APIErrorResponse: Codable {
-    let error: APIError
-}
-
-struct APIError: Codable {
-    let code: String
-    let message: String
 }

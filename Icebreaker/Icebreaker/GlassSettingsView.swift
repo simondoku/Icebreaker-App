@@ -128,6 +128,33 @@ struct GlassSettingsView: View {
                         }
                     }
                     
+                    // AI Chat Settings
+                    GlassCard {
+                        VStack(alignment: .leading, spacing: 20) {
+                            Text("AI Chat Assistant")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            SettingsToggle(
+                                title: "AI Chat Suggestions",
+                                subtitle: "Get contextual message suggestions during chats",
+                                isOn: Binding(
+                                    get: { UserDefaults.standard.bool(forKey: "ai_suggestions_enabled") },
+                                    set: { UserDefaults.standard.set($0, forKey: "ai_suggestions_enabled") }
+                                )
+                            )
+                            
+                            SettingsToggle(
+                                title: "Smart Suggestion Timing",
+                                subtitle: "AI suggests messages at natural conversation pauses",
+                                isOn: Binding(
+                                    get: { UserDefaults.standard.bool(forKey: "smart_suggestion_timing") },
+                                    set: { UserDefaults.standard.set($0, forKey: "smart_suggestion_timing") }
+                                )
+                            )
+                        }
+                    }
+                    
                     // Account Actions
                     GlassCard {
                         VStack(spacing: 16) {

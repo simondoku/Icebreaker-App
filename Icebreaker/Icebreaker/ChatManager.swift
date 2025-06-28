@@ -13,8 +13,8 @@ struct IcebreakerChatConversation: Identifiable {
     let id: String
     let matchId: String
     let otherUserName: String
-    let lastMessage: String
-    let lastMessageTime: Date
+    var lastMessage: String
+    var lastMessageTime: Date
     var unreadCount: Int
 }
 
@@ -58,6 +58,20 @@ class IcebreakerChatManager: ObservableObject {
     func markAsRead(_ conversationId: String) {
         if let index = conversations.firstIndex(where: { $0.id == conversationId }) {
             conversations[index].unreadCount = 0
+            updateUnreadCount()
+        }
+    }
+    
+    func updateConversation(conversationId: String, with message: String) {
+        if let index = conversations.firstIndex(where: { $0.id == conversationId }) {
+            conversations[index].lastMessage = message
+            conversations[index].lastMessageTime = Date()
+            
+            // Move conversation to top
+            let conversation = conversations[index]
+            conversations.remove(at: index)
+            conversations.insert(conversation, at: 0)
+            
             updateUnreadCount()
         }
     }

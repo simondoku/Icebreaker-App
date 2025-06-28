@@ -101,45 +101,61 @@ struct GlassMatchListView: View {
     }
     
     private func createAlexMatch() -> MatchResult {
-        let alexUser = NearbyUser(
-            firstName: "Alex Chen",
-            distance: 8,
-            location: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-            answers: [
-                AIAnswer(questionId: UUID(), text: "Atomic Habits - the 1% better concept is mind-blowing"),
-                AIAnswer(questionId: UUID(), text: "Made my coffee and wrote in my gratitude journal"),
-                AIAnswer(questionId: UUID(), text: "Building better daily systems and habits")
-            ],
-            isActive: true
+        let alexUser = User(
+            id: UUID().uuidString,
+            firstName: "Alex Chen", 
+            age: 28,
+            bio: "Love reading and building good habits",
+            location: "San Francisco",
+            profileImageURL: nil,
+            interests: ["reading", "productivity", "coffee"],
+            createdAt: Date()
         )
+        
+        // Set location coordinates
+        var updatedUser = alexUser
+        updatedUser.latitude = 37.7749
+        updatedUser.longitude = -122.4194
+        updatedUser.distanceFromUser = 8.0
+        updatedUser.isOnline = true
+        updatedUser.lastSeen = Date()
+        updatedUser.isVisible = true
+        
+        // Add AI answers
+        updatedUser.aiAnswers = [
+            AIAnswer(questionId: UUID(), text: "Atomic Habits - the 1% better concept is mind-blowing"),
+            AIAnswer(questionId: UUID(), text: "Made my coffee and wrote in my gratitude journal"),
+            AIAnswer(questionId: UUID(), text: "Building better daily systems and habits")
+        ]
         
         let sharedAnswers = [
             MatchResult.SharedAnswer(
                 questionText: "What book are you reading right now?",
                 userAnswer: "Atomic Habits - learning about habit stacking",
                 matchAnswer: "Atomic Habits - the 1% better concept is mind-blowing",
-                similarity: 0.95
+                compatibility: 0.95
             ),
             MatchResult.SharedAnswer(
                 questionText: "What was the first thing you did this morning?",
                 userAnswer: "Coffee + 10 minutes of journaling",
                 matchAnswer: "Made my coffee and wrote in my gratitude journal",
-                similarity: 0.88
+                compatibility: 0.88
             ),
             MatchResult.SharedAnswer(
                 questionText: "What's one thing you want to improve about yourself?",
                 userAnswer: "Being more consistent with my routines",
                 matchAnswer: "Building better daily systems and habits",
-                similarity: 0.82
+                compatibility: 0.82
             )
         ]
         
         return MatchResult(
-            user: alexUser,
-            matchPercentage: 92,
+            user: updatedUser,
+            compatibilityScore: 0.92,
             sharedAnswers: sharedAnswers,
             aiInsight: "Strong compatibility based on shared interests in personal development and routines",
-            conversationStarter: "Hey! I saw you're also reading Atomic Habits. Which habit are you working on building right now? I'm trying to get consistent with my morning routine!"
+            distance: 8.0,
+            matchedAt: Date()
         )
     }
 }

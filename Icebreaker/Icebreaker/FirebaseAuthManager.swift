@@ -167,6 +167,16 @@ class FirebaseAuthManager: ObservableObject {
     func completeOnboarding() {
         hasCompletedOnboarding = true
         UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
+        
+        // Also save the current user and profile to ensure persistence
+        if let user = user {
+            saveUser(user)
+        }
+        if let profile = userProfile {
+            saveProfile(profile)
+        }
+        
+        print("✅ Onboarding completed and saved")
     }
     
     func signOut() {
@@ -216,19 +226,32 @@ class FirebaseAuthManager: ObservableObject {
     // MARK: - Local Storage (Replace with Firebase when ready)
     
     private func loadSavedUser() {
+        // Load saved user
         if let userData = UserDefaults.standard.data(forKey: "saved_user"),
            let user = try? JSONDecoder().decode(IcebreakerUser.self, from: userData) {
             self.user = user
             self.isSignedIn = true
         }
         
+        // Load saved profile
         if let profileData = UserDefaults.standard.data(forKey: "saved_profile"),
            let profile = try? JSONDecoder().decode(IcebreakerUserProfile.self, from: profileData) {
             self.userProfile = profile
         }
         
-        // Check if user has completed onboarding
+        // Load onboarding completion status
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "has_completed_onboarding")
+        
+        // If user exists but hasn't completed onboarding, ensure they're still signed in
+        if user != nil && !hasCompletedOnboarding {
+            isSignedIn = true
+        }
+        
+        // Debug logging
+        print("🔄 Auth State Loaded:")
+        print("   - User exists: \(user != nil)")
+        print("   - Is signed in: \(isSignedIn)")
+        print("   - Onboarding complete: \(hasCompletedOnboarding)")
     }
     
     private func saveUser(_ user: IcebreakerUser) {
