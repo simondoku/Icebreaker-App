@@ -19,105 +19,6 @@ enum MessageType: String, Codable, CaseIterable {
     case system = "system"
 }
 
-enum MessageDeliveryStatus: String, Codable {
-    case sending = "sending"
-    case sent = "sent"
-    case delivered = "delivered"
-    case read = "read"
-    case failed = "failed"
-}
-
-struct RealTimeMessage: Identifiable, Codable {
-    let id: String
-    let conversationId: String
-    let senderId: String
-    let senderName: String
-    let text: String
-    let type: MessageType
-    let timestamp: Date
-    var deliveryStatus: MessageDeliveryStatus
-    var isRead: Bool
-    var metadata: [String: String]?
-    
-    init(
-        conversationId: String,
-        senderId: String,
-        senderName: String,
-        text: String,
-        type: MessageType = .text
-    ) {
-        self.id = UUID().uuidString
-        self.conversationId = conversationId
-        self.senderId = senderId
-        self.senderName = senderName
-        self.text = text
-        self.type = type
-        self.timestamp = Date()
-        self.deliveryStatus = .sending
-        self.isRead = false
-    }
-}
-
-// MARK: - Conversation Models
-
-struct RealTimeConversation: Identifiable, Codable {
-    let id: String
-    let participantIds: [String]
-    let participantNames: [String]
-    var messages: [RealTimeMessage]
-    var lastActivity: Date
-    var isActive: Bool
-    var isMuted: Bool
-    var isTyping: [String: Bool] // userId -> isTyping
-    
-    init(participantIds: [String], participantNames: [String]) {
-        self.id = UUID().uuidString
-        self.participantIds = participantIds
-        self.participantNames = participantNames
-        self.messages = []
-        self.lastActivity = Date()
-        self.isActive = true
-        self.isMuted = false
-        self.isTyping = [:]
-    }
-    
-    // Helper methods
-    func otherParticipantName(currentUserId: String) -> String {
-        guard let currentUserIndex = participantIds.firstIndex(of: currentUserId),
-              let otherIndex = participantIds.indices.first(where: { $0 != currentUserIndex }) else {
-            return "Unknown"
-        }
-        return participantNames[otherIndex]
-    }
-    
-    func otherParticipantId(currentUserId: String) -> String? {
-        return participantIds.first { $0 != currentUserId }
-    }
-    
-    var lastMessage: RealTimeMessage? {
-        return messages.last
-    }
-    
-    func unreadCount(for userId: String) -> Int {
-        return messages.filter { $0.senderId != userId && !$0.isRead }.count
-    }
-    
-    func isOtherUserTyping(currentUserId: String) -> Bool {
-        return isTyping.contains { key, value in
-            key != currentUserId && value
-        }
-    }
-}
-
-// MARK: - Connection Status
-
-enum ConnectionStatus {
-    case disconnected
-    case connecting
-    case connected
-    case reconnecting
-}
-
 // MARK: - Real-Time Chat Manager
 
 class RealTimeChatManager: ObservableObject {
@@ -126,7 +27,7 @@ class RealTimeChatManager: ObservableObject {
     // Published properties for UI updates
     @Published var conversations: [RealTimeConversation] = []
     @Published var activeConversation: RealTimeConversation?
-    @Published var connectionStatus: ConnectionStatus = .disconnected
+    @Published var connectionStatus: RealTimeChatConnectionStatus = .disconnected
     @Published var isTyping: Bool = false
     
     // Private properties
@@ -134,16 +35,27 @@ class RealTimeChatManager: ObservableObject {
     private let persistenceManager = ChatPersistenceManager()
     private var cancellables = Set<AnyCancellable>()
     private var typingTimer: Timer?
+    
+    // Auto-save and connection management timers
     private var autoSaveTimer: Timer?
     private var reconnectionTimer: Timer?
+    private var messageProcessingTimer: Timer?
+    private var connectionSimulationTimer: Timer?
     
     // Real-time simulation
     private var messageQueue: [RealTimeMessage] = []
     private var isProcessingQueue = false
     
+    // CRITICAL FIX: Add thread-safe access to conversations array
+    private let conversationsQueue = DispatchQueue(label: "com.icebreaker.conversations", attributes: .concurrent)
+    
     init(currentUserId: String = "current_user") {
         self.currentUserId = currentUserId
         setupRealTimeChat()
+    }
+    
+    deinit {
+        cleanup()
     }
     
     // MARK: - Setup & Initialization
@@ -155,10 +67,57 @@ class RealTimeChatManager: ObservableObject {
         setupMessageProcessing()
     }
     
+    private func cleanup() {
+        // CRITICAL FIX: Properly invalidate all timers to prevent memory leaks
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = nil
+        
+        reconnectionTimer?.invalidate()
+        reconnectionTimer = nil
+        
+        messageProcessingTimer?.invalidate()
+        messageProcessingTimer = nil
+        
+        connectionSimulationTimer?.invalidate()
+        connectionSimulationTimer = nil
+        
+        typingTimer?.invalidate()
+        typingTimer = nil
+        
+        cancellables.removeAll()
+        
+        // Clear message queue to prevent processing after cleanup
+        messageQueue.removeAll()
+        isProcessingQueue = false
+    }
+    
     private func setupMessageProcessing() {
-        // Process message queue every 500ms
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.processMessageQueue()
+        // CRITICAL FIX: Use weak self to prevent retain cycles and properly invalidate existing timer
+        messageProcessingTimer?.invalidate()
+        messageProcessingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            self.processMessageQueue()
+        }
+    }
+    
+    // MARK: - Thread-Safe Access Methods
+    
+    private func safeReadConversations<T>(_ operation: ([RealTimeConversation]) -> T) -> T {
+        return conversationsQueue.sync {
+            return operation(conversations)
+        }
+    }
+    
+    private func safeWriteConversations(_ operation: @escaping (inout [RealTimeConversation]) -> Void) {
+        conversationsQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            operation(&self.conversations)
+            DispatchQueue.main.async {
+                self.objectWillChange.send()
+            }
         }
     }
     
@@ -168,14 +127,16 @@ class RealTimeChatManager: ObservableObject {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
         let message = RealTimeMessage(
-            conversationId: conversationId,
             senderId: currentUserId,
-            senderName: "You",
-            text: text,
-            type: type
+            text: text
         )
         
-        addMessageToConversation(message)
+        safeWriteConversations { conversations in
+            guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+            conversations[conversationIndex].messages.append(message)
+            conversations[conversationIndex].lastActivity = message.timestamp
+        }
+        
         simulateMessageDelivery(messageId: message.id, conversationId: conversationId)
         
         // Stop typing indicator
@@ -183,36 +144,57 @@ class RealTimeChatManager: ObservableObject {
         
         // Simulate reply from other user (for demo)
         simulateReply(to: conversationId, after: 2.0)
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.saveConversations()
+        }
     }
     
     func markMessagesAsRead(in conversationId: String) {
-        guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
-        
-        for messageIndex in conversations[conversationIndex].messages.indices {
-            if conversations[conversationIndex].messages[messageIndex].senderId != currentUserId {
-                conversations[conversationIndex].messages[messageIndex].isRead = true
-                conversations[conversationIndex].messages[messageIndex].deliveryStatus = .read
+        safeWriteConversations { conversations in
+            guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+            
+            for messageIndex in conversations[conversationIndex].messages.indices {
+                if conversations[conversationIndex].messages[messageIndex].senderId != self.currentUserId {
+                    conversations[conversationIndex].messages[messageIndex].isRead = true
+                    conversations[conversationIndex].messages[messageIndex].deliveryStatus = .read
+                }
             }
         }
         
-        updateActiveConversation(conversationId)
-        saveConversations()
+        DispatchQueue.main.async { [weak self] in
+            self?.updateActiveConversation(conversationId)
+            self?.saveConversations()
+        }
     }
     
     func setTypingStatus(_ isTyping: Bool, in conversationId: String) {
-        guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
-        
-        conversations[conversationIndex].isTyping[currentUserId] = isTyping
-        updateActiveConversation(conversationId)
-        
-        if isTyping {
-            // Reset typing timer
-            typingTimer?.invalidate()
-            typingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-                self?.setTypingStatus(false, in: conversationId)
+        safeWriteConversations { conversations in
+            guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+            
+            if isTyping {
+                if !conversations[conversationIndex].typingUsers.contains(self.currentUserId) {
+                    conversations[conversationIndex].typingUsers.append(self.currentUserId)
+                }
+            } else {
+                conversations[conversationIndex].typingUsers.removeAll { $0 == self.currentUserId }
             }
-        } else {
-            typingTimer?.invalidate()
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.updateActiveConversation(conversationId)
+            
+            if isTyping {
+                // Reset typing timer with proper cleanup
+                self.typingTimer?.invalidate()
+                self.typingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+                    self?.setTypingStatus(false, in: conversationId)
+                }
+            } else {
+                self.typingTimer?.invalidate()
+                self.typingTimer = nil
+            }
         }
     }
     
@@ -222,20 +204,28 @@ class RealTimeChatManager: ObservableObject {
             participantNames: ["You", userName]
         )
         
-        conversations.append(conversation)
-        saveConversations()
+        safeWriteConversations { conversations in
+            conversations.append(conversation)
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.saveConversations()
+        }
         
         return conversation
     }
     
     func deleteConversation(_ conversationId: String) {
-        conversations.removeAll { $0.id == conversationId }
-        
-        if activeConversation?.id == conversationId {
-            activeConversation = nil
+        safeWriteConversations { conversations in
+            conversations.removeAll { $0.id == conversationId }
         }
         
-        saveConversations()
+        DispatchQueue.main.async { [weak self] in
+            if self?.activeConversation?.id == conversationId {
+                self?.activeConversation = nil
+            }
+            self?.saveConversations()
+        }
     }
     
     func setActiveConversation(_ conversation: RealTimeConversation?) {
@@ -248,19 +238,28 @@ class RealTimeChatManager: ObservableObject {
     
     // MARK: - Private Helper Methods
     
-    private func addMessageToConversation(_ message: RealTimeMessage) {
-        guard let conversationIndex = conversations.firstIndex(where: { $0.id == message.conversationId }) else { return }
+    private func addMessageToConversation(_ message: RealTimeMessage, to conversationId: String) {
+        safeWriteConversations { conversations in
+            guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+            conversations[conversationIndex].messages.append(message)
+            conversations[conversationIndex].lastActivity = message.timestamp
+        }
         
-        conversations[conversationIndex].messages.append(message)
-        conversations[conversationIndex].lastActivity = message.timestamp
-        
-        updateActiveConversation(message.conversationId)
-        saveConversations()
+        DispatchQueue.main.async { [weak self] in
+            self?.updateActiveConversation(conversationId)
+            self?.saveConversations()
+        }
     }
     
     private func updateActiveConversation(_ conversationId: String) {
-        if activeConversation?.id == conversationId {
-            activeConversation = conversations.first { $0.id == conversationId }
+        let conversation = safeReadConversations { conversations in
+            return conversations.first { $0.id == conversationId }
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            if self?.activeConversation?.id == conversationId {
+                self?.activeConversation = conversation
+            }
         }
     }
     
@@ -283,26 +282,43 @@ class RealTimeChatManager: ObservableObject {
     }
     
     private func updateMessageStatus(messageId: String, conversationId: String, status: MessageDeliveryStatus) {
-        guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }),
-              let messageIndex = conversations[conversationIndex].messages.firstIndex(where: { $0.id == messageId }) else { return }
+        safeWriteConversations { conversations in
+            guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }),
+                  let messageIndex = conversations[conversationIndex].messages.firstIndex(where: { $0.id == messageId }) else { return }
+            
+            conversations[conversationIndex].messages[messageIndex].deliveryStatus = status
+        }
         
-        conversations[conversationIndex].messages[messageIndex].deliveryStatus = status
-        updateActiveConversation(conversationId)
-        saveConversations()
+        DispatchQueue.main.async { [weak self] in
+            self?.updateActiveConversation(conversationId)
+            self?.saveConversations()
+        }
     }
     
     private func simulateReply(to conversationId: String, after delay: TimeInterval) {
-        guard let conversation = conversations.first(where: { $0.id == conversationId }),
-              let otherUserId = conversation.otherParticipantId(currentUserId: currentUserId),
-              let otherUserName = conversation.otherParticipantName(currentUserId: currentUserId) != "Unknown" ? conversation.otherParticipantName(currentUserId: currentUserId) : nil else { return }
+        let (otherUserName, otherUserId) = safeReadConversations { conversations in
+            guard let conversation = conversations.first(where: { $0.id == conversationId }) else { 
+                return ("Unknown", "unknown")
+            }
+            let otherUserName = conversation.otherParticipantName(currentUserId: self.currentUserId)
+            let otherUserId = conversation.participantIds.first { $0 != self.currentUserId } ?? "unknown"
+            return (otherUserName, otherUserId)
+        }
         
         // Simulate typing indicator
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self = self,
-                  let conversationIndex = self.conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+            guard let self = self else { return }
             
-            self.conversations[conversationIndex].isTyping[otherUserId] = true
-            self.updateActiveConversation(conversationId)
+            self.safeWriteConversations { conversations in
+                guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+                if !conversations[conversationIndex].typingUsers.contains(otherUserId) {
+                    conversations[conversationIndex].typingUsers.append(otherUserId)
+                }
+            }
+            
+            DispatchQueue.main.async { [weak self] in
+                self?.updateActiveConversation(conversationId)
+            }
             
             // Send reply after typing
             DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 1.0...3.0)) { [weak self] in
@@ -312,28 +328,33 @@ class RealTimeChatManager: ObservableObject {
     }
     
     private func sendSimulatedReply(conversationId: String, senderId: String, senderName: String) {
-        guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+        let lastMessage: RealTimeMessage? = safeReadConversations { conversations in
+            guard let conversation = conversations.first(where: { $0.id == conversationId }) else { 
+                return nil as RealTimeMessage?
+            }
+            return conversation.lastMessage
+        }
         
         // Stop typing
-        conversations[conversationIndex].isTyping[senderId] = false
+        safeWriteConversations { conversations in
+            guard let conversationIndex = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+            conversations[conversationIndex].typingUsers.removeAll { $0 == senderId }
+        }
         
-        let replies = getContextualResponses(for: conversations[conversationIndex].lastMessage, conversation: conversations[conversationIndex])
+        let replies = getContextualResponses(for: lastMessage, conversationId: conversationId)
         let replyText = replies.randomElement() ?? "That's interesting!"
         
+        // Create message with proper delivery status using the new initializer
         let replyMessage = RealTimeMessage(
-            conversationId: conversationId,
             senderId: senderId,
-            senderName: senderName,
-            text: replyText
+            text: replyText,
+            deliveryStatus: .delivered
         )
         
-        var message = replyMessage
-        message.deliveryStatus = .delivered
-        
-        addMessageToConversation(message)
+        addMessageToConversation(replyMessage, to: conversationId)
     }
     
-    private func getContextualResponses(for lastMessage: RealTimeMessage?, conversation: RealTimeConversation) -> [String] {
+    private func getContextualResponses(for lastMessage: RealTimeMessage?, conversationId: String) -> [String] {
         guard let lastMessage = lastMessage else {
             return ["Hey! 👋", "How's your day going?", "Nice to meet you!"]
         }
@@ -388,7 +409,7 @@ class RealTimeChatManager: ObservableObject {
         
         // Process the message (simulate network delay)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.addMessageToConversation(message)
+            self?.addMessageToConversation(message, to: message.conversationId)
             self?.isProcessingQueue = false
         }
     }
@@ -400,11 +421,11 @@ class RealTimeChatManager: ObservableObject {
             self?.connectionStatus = .connected
         }
         
-        // Simulate occasional disconnections
-        Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+        // Simulate occasional disconnections with weak self
+        connectionSimulationTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             if Bool.random() && self?.connectionStatus == .connected {
                 self?.connectionStatus = .reconnecting
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                     self?.connectionStatus = .connected
                 }
             }
@@ -434,48 +455,37 @@ class RealTimeChatManager: ObservableObject {
     }
     
     private func loadSampleConversation() {
-        let sampleConversation = RealTimeConversation(
+        var sampleConversation = RealTimeConversation(
             participantIds: [currentUserId, "alex_demo_123"],
             participantNames: ["You", "Alex"]
         )
         
-        var conversation = sampleConversation
-        
         // Add sample messages
         let messages = [
             RealTimeMessage(
-                conversationId: conversation.id,
                 senderId: "alex_demo_123",
-                senderName: "Alex",
-                text: "Hey! I saw you're also into reading. What's the last book that completely changed your perspective? 📚",
-                type: .icebreaker
+                text: "Hey! I saw you're also into reading. What's the last book that completely changed your perspective? 📚"
             ),
             RealTimeMessage(
-                conversationId: conversation.id,
                 senderId: currentUserId,
-                senderName: "You",
-                text: "Hi Alex! I just finished 'Atomic Habits' and it's been a game-changer for my daily routine. The 1% better concept is so powerful! What about you?",
-                type: .text
+                text: "Hi Alex! I just finished 'Atomic Habits' and it's been a game-changer for my daily routine. The 1% better concept is so powerful! What about you?"
             ),
             RealTimeMessage(
-                conversationId: conversation.id,
                 senderId: "alex_demo_123",
-                senderName: "Alex",
-                text: "That's amazing! I love that book too. I've been working on the 'habit stacking' technique for my morning routine. Have you tried implementing any specific habits from it?",
-                type: .text
+                text: "That's amazing! I love that book too. I've been working on the 'habit stacking' technique for my morning routine. Have you tried implementing any specific habits from it?"
             )
         ]
         
-        conversation.messages = messages
-        conversation.lastActivity = messages.last?.timestamp ?? Date()
+        sampleConversation.messages = messages
+        sampleConversation.lastActivity = messages.last?.timestamp ?? Date()
         
         // Set delivery status for demo messages
-        for i in conversation.messages.indices {
-            conversation.messages[i].deliveryStatus = .read
-            conversation.messages[i].isRead = true
+        for i in sampleConversation.messages.indices {
+            sampleConversation.messages[i].deliveryStatus = .read
+            sampleConversation.messages[i].isRead = true
         }
         
-        conversations.append(conversation)
+        conversations.append(sampleConversation)
         saveConversations()
     }
     
@@ -488,7 +498,7 @@ class RealTimeChatManager: ObservableObject {
     }
     
     var activeConversations: [RealTimeConversation] {
-        return conversations.filter { $0.isActive }.sorted { $0.lastActivity > $1.lastActivity }
+        return conversations.sorted { $0.lastActivity > $1.lastActivity }
     }
     
     func getConversation(by id: String) -> RealTimeConversation? {
@@ -500,7 +510,7 @@ class RealTimeChatManager: ObservableObject {
             return ["Hey! 👋", "How's your day going?", "Nice to meet you!"]
         }
         
-        return getContextualResponses(for: lastMessage, conversation: conversation)
+        return getContextualResponses(for: lastMessage, conversationId: conversation.id)
     }
 }
 

@@ -30,12 +30,18 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     func requestLocationPermission() {
+        guard authorizationStatus == .notDetermined else { return }
         locationManager.requestWhenInUseAuthorization()
     }
     
     func startLocationUpdates() {
         guard authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways else {
-            locationError = .permissionDenied
+            // If permission not granted, request it
+            if authorizationStatus == .notDetermined {
+                requestLocationPermission()
+            } else {
+                locationError = .permissionDenied
+            }
             return
         }
         
@@ -66,7 +72,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             await updateFirebaseVisibility(isVisible)
         }
         
-        if isVisible && authorizationStatus == .authorizedWhenInUse {
+        if isVisible && (authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways) {
             startLocationUpdates()
         } else if !isVisible {
             stopLocationUpdates()

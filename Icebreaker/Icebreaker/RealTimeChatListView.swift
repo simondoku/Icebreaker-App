@@ -79,7 +79,7 @@ struct RealTimeChatListView: View {
 
 struct ChatListHeaderView: View {
     let unreadCount: Int
-    let connectionStatus: ConnectionStatus
+    let connectionStatus: RealTimeChatConnectionStatus
     
     var body: some View {
         HStack {
@@ -96,7 +96,7 @@ struct ChatListHeaderView: View {
                             .foregroundColor(.cyan)
                     }
                     
-                    ConnectionStatusIndicator(status: connectionStatus)
+                    ConnectionStatusDot(status: connectionStatus)
                 }
             }
             

@@ -413,28 +413,24 @@ class AIDebugManager: ObservableObject {
         
         aiService.generatePersonalizedQuestion(
             userHistory: [],
-            userPreferences: ["testing", "debug"],
+            userPreferences: [],
             category: category
         )
+        .receive(on: DispatchQueue.main)
         .sink(
             receiveCompletion: { [weak self] completion in
-                DispatchQueue.main.async {
-                    self?.isTestingQuestion = false
-                    if case .failure(let error) = completion {
-                        self?.lastError = error.localizedDescription
-                        // Fallback to sample question for demo
-                        self?.generatedQuestion = AIQuestion(
-                            text: "What's your favorite way to spend a weekend? (Fallback question - check API key)",
-                            category: category
-                        )
-                    }
+                self?.isTestingQuestion = false
+                if case .failure(let error) = completion {
+                    self?.lastError = error.localizedDescription
+                    // Fallback question
+                    self?.generatedQuestion = AIQuestion(
+                        text: "What's something interesting about \(category.displayName.lowercased()) that you'd love to share?",
+                        category: category
+                    )
                 }
             },
             receiveValue: { [weak self] question in
-                DispatchQueue.main.async {
-                    self?.generatedQuestion = question
-                    self?.isTestingQuestion = false
-                }
+                self?.generatedQuestion = question
             }
         )
         .store(in: &cancellables)
@@ -444,8 +440,16 @@ class AIDebugManager: ObservableObject {
         isTestingCompatibility = true
         lastError = nil
         
-        let aiAnswer1 = AIAnswer(questionId: UUID(), text: answer1)
-        let aiAnswer2 = AIAnswer(questionId: UUID(), text: answer2)
+        let aiAnswer1 = AIAnswer(
+            questionId: "test-question-1",
+            questionText: question,
+            answer: answer1
+        )
+        let aiAnswer2 = AIAnswer(
+            questionId: "test-question-2", 
+            questionText: question,
+            answer: answer2
+        )
         
         aiService.analyzeCompatibility(
             userAnswer: aiAnswer1,
@@ -479,10 +483,20 @@ class AIDebugManager: ObservableObject {
     
     @MainActor func testMatchEngine() {
         isTestingMatches = true
+        lastError = nil
+        testMatches = []
         
         let sampleAnswers = [
-            AIAnswer(questionId: UUID(), text: "I love reading science fiction novels"),
-            AIAnswer(questionId: UUID(), text: "Coffee is my morning ritual")
+            AIAnswer(
+                questionId: "sample-1",
+                questionText: "What's your favorite hobby?",
+                answer: "I love reading science fiction novels"
+            ),
+            AIAnswer(
+                questionId: "sample-2", 
+                questionText: "What's your morning routine?",
+                answer: "Coffee is my morning ritual"
+            )
         ]
         
         matchEngine?.findMatches(userAnswers: sampleAnswers)
@@ -499,12 +513,12 @@ class AIDebugManager: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Timeout after 10 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-            if self.isTestingMatches {
-                self.isTestingMatches = false
-                if self.testMatches.isEmpty {
-                    self.lastError = "Match engine test timeout"
+        // Timeout after 10 seconds with weak self
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            if self?.isTestingMatches == true {
+                self?.isTestingMatches = false
+                if self?.testMatches.isEmpty == true {
+                    self?.lastError = "Match engine test timeout"
                 }
             }
         }

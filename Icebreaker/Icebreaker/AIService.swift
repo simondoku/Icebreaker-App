@@ -1,19 +1,6 @@
 import Foundation
 import Combine
 
-// MARK: - Compatibility Analysis Model
-struct CompatibilityAnalysis {
-    let score: Double
-    let reason: String
-    let sharedTopics: [String]
-    
-    init(score: Double, reason: String, sharedTopics: [String]) {
-        self.score = score
-        self.reason = reason
-        self.sharedTopics = sharedTopics
-    }
-}
-
 // MARK: - AI Service Configuration
 enum AIProvider {
     case deepseek
@@ -122,8 +109,18 @@ class AIService: ObservableObject {
     
     private let provider: AIProvider = .deepseek
     private var apiKey: String {
-        // In production, store this securely in Keychain or environment variables
-        return Bundle.main.object(forInfoDictionaryKey: "AI_API_KEY") as? String ?? "your-deepseek-api-key-here"
+        // Priority order: Environment variable > Bundle > Keychain > Secure fallback
+        if let envKey = ProcessInfo.processInfo.environment["AI_API_KEY"], !envKey.isEmpty {
+            return envKey
+        }
+        
+        if let bundleKey = Bundle.main.object(forInfoDictionaryKey: "AI_API_KEY") as? String, !bundleKey.isEmpty {
+            return bundleKey
+        }
+        
+        // TODO: Implement Keychain storage for production
+        // For now, return empty string to prevent accidental API usage with placeholder key
+        return ""
     }
     
     private let session = URLSession.shared
@@ -234,8 +231,8 @@ class AIService: ObservableObject {
     
     // MARK: - Generate Context-Aware Chat Suggestions
     func generateChatSuggestions(
-        conversationHistory: [ChatMessage],
-        userProfile: User?,
+        conversationHistory: [RealTimeMessage],
+        userProfileId: User,
         matchProfile: User?
     ) -> AnyPublisher<[String], Error> {
         
@@ -246,7 +243,7 @@ class AIService: ObservableObject {
         
         let prompt = buildChatSuggestionsPrompt(
             conversationHistory: conversationHistory,
-            userProfile: userProfile,
+            userProfile: userProfileId,
             matchProfile: matchProfile
         )
         
@@ -284,7 +281,7 @@ class AIService: ObservableObject {
     }
     
     // MARK: - Chat Suggestions for Chat Manager
-    func generateChatSuggestions(for chatHistory: [ChatMessage], partnerUser: User) async throws -> [String] {
+    func generateChatSuggestions(for chatHistory: [RealTimeMessage], partnerUser: User) async throws -> [String] {
         let prompt = buildChatSuggestionsPrompt(
             chatHistory: chatHistory,
             partnerUser: partnerUser
@@ -521,8 +518,8 @@ class AIService: ObservableObject {
     }
     
     private func buildChatSuggestionsPrompt(
-        conversationHistory: [ChatMessage],
-        userProfile: User?,
+        conversationHistory: [RealTimeMessage],
+        userProfile: User,
         matchProfile: User?
     ) -> String {
         var prompt = """
@@ -539,15 +536,13 @@ class AIService: ObservableObject {
         """
         
         // Add user profile context
-        if let user = userProfile {
-            prompt += "\nUser Profile:\n"
-            prompt += "- Age: \(user.age)\n"
-            if !user.bio.isEmpty {
-                prompt += "- Bio: \(user.bio)\n"
-            }
-            if !user.interests.isEmpty {
-                prompt += "- Interests: \(user.interests.joined(separator: ", "))\n"
-            }
+        prompt += "\nUser Profile:\n"
+        prompt += "- Age: \(userProfile.age)\n"
+        if !userProfile.bio.isEmpty {
+            prompt += "- Bio: \(userProfile.bio)\n"
+        }
+        if !userProfile.interests.isEmpty {
+            prompt += "- Interests: \(userProfile.interests.joined(separator: ", "))\n"
         }
         
         // Add match profile context
@@ -581,7 +576,7 @@ class AIService: ObservableObject {
     }
     
     private func buildChatSuggestionsPrompt(
-        chatHistory: [ChatMessage],
+        chatHistory: [RealTimeMessage],
         partnerUser: User
     ) -> String {
         var prompt = """
@@ -704,6 +699,29 @@ class AIService: ObservableObject {
                 }
                 return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            .filter { !$0.isEmpty }
+        
+        // Return up to 3 suggestions, with fallbacks if needed
+        let maxSuggestions = min(3, suggestions.count)
+        if maxSuggestions > 0 {
+            return Array(suggestions.prefix(maxSuggestions))
+        } else {
+            // Fallback suggestions if parsing fails
+            return [
+                "That's interesting! Tell me more about that.",
+                "I'd love to hear your thoughts on this.",
+                "What's been the highlight of your day?"
+            ]
+        }
+    }
+    
+    private func processChatSuggestionsResponse(
+        chatHistory: [RealTimeMessage],
+        content: String
+    ) -> [String] {
+        let suggestions = content
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         
         // Return up to 3 suggestions, with fallbacks if needed

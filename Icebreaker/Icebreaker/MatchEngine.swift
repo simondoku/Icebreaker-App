@@ -12,59 +12,7 @@ import Firebase
 import FirebaseFirestore
 import SwiftUI
 
-// MARK: - Match Result Models
-struct MatchResult: Identifiable {
-    let id = UUID()
-    let user: User
-    let compatibilityScore: Double
-    let sharedAnswers: [SharedAnswer]
-    let aiInsight: String
-    let distance: Double
-    let matchedAt: Date
-    
-    struct SharedAnswer {
-        let questionText: String
-        let userAnswer: String
-        let matchAnswer: String
-        let compatibility: Double
-    }
-    
-    // Computed properties for compatibility with existing views
-    var matchPercentage: Double {
-        return compatibilityScore * 100
-    }
-    
-    var conversationStarter: String {
-        return "Hey! I noticed we have some things in common. How's your day going?"
-    }
-    
-    var matchLevel: MatchLevel {
-        switch compatibilityScore {
-        case 0.8...:
-            return MatchLevel.high
-        case 0.6..<0.8:
-            return MatchLevel.medium
-        default:
-            return MatchLevel.low
-        }
-    }
-}
-
-// MARK: - Match Level Enum
-enum MatchLevel {
-    case high, medium, low
-    
-    var color: Color {
-        switch self {
-        case .high:
-            return .green
-        case .medium:
-            return .orange
-        case .low:
-            return .red
-        }
-    }
-}
+// Note: The 'MatchResult' model is now defined in SharedModels.swift.
 
 // MARK: - Match Engine
 @MainActor
@@ -82,6 +30,7 @@ class MatchEngine: ObservableObject {
     
     private let db = Firestore.firestore()
     private let aiService = AIService.shared
+    private let locationManager = LocationManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     // Configuration
@@ -90,16 +39,57 @@ class MatchEngine: ObservableObject {
     private let maxMatchesPerSearch = 10
     
     // Make initializer public for compatibility
-    init() {}
+    init() {
+        // Observe location manager changes
+        locationManager.$authorizationStatus
+            .sink { [weak self] status in
+                if status == .authorizedWhenInUse || status == .authorizedAlways {
+                    // Location permission granted, retry finding matches if needed
+                    if self?.errorMessage == "Location required for matching" {
+                        self?.errorMessage = nil
+                        // Retry with current user if available
+                        self?.retryMatchingWithLocation()
+                    }
+                }
+            }
+            .store(in: &cancellables)
+    }
     
     // Keep the shared instance pattern
     static let sharedInstance = MatchEngine()
     
+    private func retryMatchingWithLocation() {
+        // This will be called when location permission is granted
+        // You can store the last user context and retry here
+    }
+    
     // MARK: - Main Matching Function
     func findMatches(for currentUser: User) async {
-        guard let userLocation = currentUser.clLocation else {
+        // Check if we have location permission first
+        if !locationManager.isLocationPermissionGranted() {
             await MainActor.run {
                 self.errorMessage = "Location required for matching"
+                // Request location permission
+                self.locationManager.requestLocationPermission()
+            }
+            return
+        }
+        
+        // If we have permission but no current location, try to get it
+        if locationManager.location == nil {
+            locationManager.startLocationUpdates()
+            await MainActor.run {
+                self.errorMessage = "Getting your location..."
+            }
+            return
+        }
+        
+        // Use current location from LocationManager if user location is not available
+        let userLocation = currentUser.clLocation ?? locationManager.location
+        
+        guard let userLocation = userLocation else {
+            await MainActor.run {
+                self.errorMessage = "Unable to determine your location. Please check your location settings."
             }
             return
         }
@@ -137,6 +127,7 @@ class MatchEngine: ObservableObject {
 
             await MainActor.run {
                 self.currentMatches = Array(topMatches)
+                self.matches = Array(topMatches) // Also update the compatible matches property
                 self.isLoading = false
             }
 
@@ -180,19 +171,11 @@ class MatchEngine: ObservableObject {
         maxDistance: Double
     ) async throws -> [User] {
         
-        // Calculate bounding box for efficient querying
-        let boundingBox = calculateBoundingBox(
-            center: userLocation,
-            radiusKm: maxDistance
-        )
-        
-        // Query Firebase for users within bounding box
+        // Simplified query to avoid requiring composite indexes
+        // We'll fetch visible users and filter by location in memory
         let snapshot = try await db.collection("users")
             .whereField("isVisible", isEqualTo: true)
-            .whereField("latitude", isGreaterThanOrEqualTo: boundingBox.minLat)
-            .whereField("latitude", isLessThanOrEqualTo: boundingBox.maxLat)
-            .whereField("longitude", isGreaterThanOrEqualTo: boundingBox.minLon)
-            .whereField("longitude", isLessThanOrEqualTo: boundingBox.maxLon)
+            .limit(to: 100) // Limit to reasonable number for memory filtering
             .getDocuments()
         
         var nearbyUsers: [User] = []
@@ -204,11 +187,12 @@ class MatchEngine: ObservableObject {
                 // Skip current user
                 if user.id == currentUserId { continue }
                 
-                // Calculate exact distance
-                if let userLoc = user.clLocation {
-                    let distance = userLocation.distance(from: userLoc) / 1000.0 // Convert to km
+                // Calculate exact distance if user has location
+                if let userLat = user.latitude, let userLon = user.longitude {
+                    let userCLLocation = CLLocation(latitude: userLat, longitude: userLon)
+                    let distance = userLocation.distance(from: userCLLocation) / 1000.0 // Convert to km
                     
-                    // Check if within actual radius (not just bounding box)
+                    // Check if within actual radius
                     if distance <= maxDistance {
                         user.distanceFromUser = distance
                         nearbyUsers.append(user)
@@ -218,6 +202,9 @@ class MatchEngine: ObservableObject {
                 print("Error decoding user: \(error)")
             }
         }
+        
+        // Sort by distance
+        nearbyUsers.sort { ($0.distanceFromUser ?? Double.greatestFiniteMagnitude) < ($1.distanceFromUser ?? Double.greatestFiniteMagnitude) }
         
         return nearbyUsers
     }
@@ -251,22 +238,22 @@ class MatchEngine: ObservableObject {
                 compatibilityScores.append(analysis.score)
                 analyzedAnswers.append(MatchResult.SharedAnswer(
                     questionText: sharedAnswer.questionText,
-                    userAnswer: sharedAnswer.userAnswer.text,
-                    matchAnswer: sharedAnswer.matchAnswer.text,
+                    userAnswer: sharedAnswer.userAnswer.answer,
+                    matchAnswer: sharedAnswer.matchAnswer.answer,
                     compatibility: analysis.score
                 ))
             } catch {
                 print("AI analysis failed: \(error)")
                 // Fallback to basic compatibility score
                 let basicScore = calculateBasicCompatibility(
-                    answer1: sharedAnswer.userAnswer.text,
-                    answer2: sharedAnswer.matchAnswer.text
+                    answer1: sharedAnswer.userAnswer.answer,
+                    answer2: sharedAnswer.matchAnswer.answer
                 )
                 compatibilityScores.append(basicScore)
                 analyzedAnswers.append(MatchResult.SharedAnswer(
                     questionText: sharedAnswer.questionText,
-                    userAnswer: sharedAnswer.userAnswer.text,
-                    matchAnswer: sharedAnswer.matchAnswer.text,
+                    userAnswer: sharedAnswer.userAnswer.answer,
+                    matchAnswer: sharedAnswer.matchAnswer.answer,
                     compatibility: basicScore
                 ))
             }
@@ -305,7 +292,7 @@ class MatchEngine: ObservableObject {
             for answer2 in user2Answers {
                 if answer1.questionId == answer2.questionId {
                     // Find the question text (you might need to store this or fetch it)
-                    let questionText = getQuestionText(for: answer1.questionId)
+                    let questionText = getQuestionText(for: answer1.questionId) ?? "Unknown Question"
                     sharedAnswers.append((questionText, answer1, answer2))
                 }
             }
@@ -314,9 +301,10 @@ class MatchEngine: ObservableObject {
         return sharedAnswers
     }
     
-    private func getQuestionText(for questionId: UUID) -> String {
+    private func getQuestionText(for questionId: String) -> String? {
         // This should fetch from your questions database
         // For now, return a placeholder based on common question patterns
+        // In a real app, you'd have a data store for AIQuestions.
         return "What's your favorite way to spend a weekend?"
     }
     

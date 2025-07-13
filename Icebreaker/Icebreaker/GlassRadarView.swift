@@ -2,7 +2,7 @@ import SwiftUI
 import CoreLocation
 
 struct GlassRadarView: View {
-    @StateObject private var locationManager = LocationManager()
+    @EnvironmentObject var locationManager: LocationManager
     @StateObject private var matchEngine = MatchEngine()
     @EnvironmentObject var questionManager: AIQuestionManager
     
@@ -12,262 +12,23 @@ struct GlassRadarView: View {
     @State private var showingMatchesList = false
     @State private var showingMatchPopup = false
     @State private var selectedUserForPopup: MatchResult?
-    @State private var scanToggle = false // For manual scan control
+    @State private var scanToggle = false
     
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
-                    // Enhanced Header with scan control
-                    VStack(spacing: 12) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Icebreaker")
-                                    .font(.largeTitle)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                                
-                                HStack(spacing: 8) {
-                                    Circle()
-                                        .fill(isScanning ? Color.green : Color.orange)
-                                        .frame(width: 8, height: 8)
-                                        .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: isScanning)
-                                    
-                                    Text("AI Radar • \(isScanning ? "Scanning" : "Paused")")
-                                        .font(.subheadline)
-                                        .foregroundColor(.white.opacity(0.7))
-                                }
-                            }
-                            
-                            Spacer()
-                            
-                            // Scan toggle button
-                            Button(action: {
-                                withAnimation(.spring()) {
-                                    isScanning.toggle()
-                                    scanToggle.toggle()
-                                }
-                            }) {
-                                Image(systemName: isScanning ? "pause.circle.fill" : "play.circle.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.cyan)
-                            }
-                        }
-                        
-                        // Stats bar
-                        HStack(spacing: 20) {
-                            StatItem(number: "4", label: "Nearby")
-                            StatItem(number: "89%", label: "Best Match")
-                            StatItem(number: "\(Int(locationManager.visibilityRange))m", label: "Range")
-                        }
-                        .padding(.horizontal)
-                    }
-                    .padding(.top, 20)
+                    // Header
+                    headerView
                     
-                    // Enhanced Match Popup Overlay
-                    ZStack {
-                        // Radar Container with better interaction
-                        ZStack {
-                            // Enhanced RadarSweepView
-                            RadarSweepView(isActive: isScanning)
-                                .scaleEffect(scanToggle ? 1.05 : 1.0)
-                                .animation(.spring(response: 0.6, dampingFraction: 0.8), value: scanToggle)
-                            
-                            // Enhanced User dots with improved positioning and animation
-                            ForEach(sampleMatches(), id: \.user.id) { match in
-                                UserRadarDot(
-                                    match: match,
-                                    isScanning: isScanning,
-                                    onTap: {
-                                        selectedUserForPopup = match
-                                        withAnimation(.spring()) {
-                                            showingMatchPopup = true
-                                        }
-                                        
-                                        // Auto-hide popup after 4 seconds
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                                            withAnimation(.easeOut) {
-                                                showingMatchPopup = false
-                                            }
-                                        }
-                                    }
-                                )
-                            }
-                            
-                            // Interactive radar overlay
-                            Button(action: {
-                                showingMatchesList = true
-                            }) {
-                                Rectangle()
-                                    .fill(Color.clear)
-                                    .frame(width: 280, height: 280)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                        .frame(height: 380)
-                        
-                        // Enhanced Match Popup
-                        if showingMatchPopup, let match = selectedUserForPopup {
-                            VStack {
-                                MatchPopupView(match: match)
-                                    .transition(.asymmetric(
-                                        insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.8)),
-                                        removal: .move(edge: .top).combined(with: .opacity)
-                                    ))
-                                    .zIndex(1)
-                                Spacer()
-                            }
-                        }
-                    }
+                    // Radar Section
+                    radarSection
                     
-                    // Visibility Range Control
-                    VStack(spacing: 16) {
-                        HStack {
-                            Text("Visibility Range")
-                                .font(.title3)
-                                .fontWeight(.medium)
-                                .foregroundColor(.white)
-                            
-                            Spacer()
-                            
-                            Text("\(Int(locationManager.visibilityRange))m")
-                                .font(.title3)
-                                .fontWeight(.bold)
-                                .foregroundColor(.cyan)
-                        }
-                        
-                        // Interactive slider with cyan gradient
-                        GeometryReader { geometry in
-                            ZStack(alignment: .leading) {
-                                // Track
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.white.opacity(0.2))
-                                    .frame(height: 8)
-                                
-                                // Fill - dynamic width based on range value
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [.cyan, .green],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                                    .frame(
-                                        width: geometry.size.width * CGFloat((locationManager.visibilityRange - 5) / (50 - 5)), 
-                                        height: 8
-                                    )
-                                
-                                // Thumb - positioned based on range value
-                                Circle()
-                                    .fill(Color.cyan)
-                                    .frame(width: 24, height: 24)
-                                    .shadow(color: .cyan, radius: 8)
-                                    .offset(
-                                        x: geometry.size.width * CGFloat((locationManager.visibilityRange - 5) / (50 - 5)) - 12
-                                    )
-                            }
-                        }
-                        .frame(height: 24)
-                        .gesture(
-                            DragGesture()
-                                .onChanged { value in
-                                    let percent = max(0, min(1, value.location.x / UIScreen.main.bounds.width * 0.85))
-                                    let newValue = 5 + (45 * percent) // Range from 5 to 50
-                                    locationManager.visibilityRange = newValue
-                                }
-                        )
-                        .onTapGesture { location in
-                            let percent = max(0, min(1, location.x / UIScreen.main.bounds.width * 0.85))
-                            let newValue = 5 + (45 * percent)
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                locationManager.visibilityRange = newValue
-                            }
-                        }
-                    }
-                    .padding(24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(Color.white.opacity(0.08))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                            )
-                    )
+                    // Controls
+                    controlsSection
                     
-                    // Enhanced Broadcasting Toggle
-                    HStack {
-                        HStack(spacing: 12) {
-                            Text("🎯")
-                                .font(.title2)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Broadcasting Location")
-                                    .font(.title3)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.white)
-                                
-                                Text(locationManager.isVisible ? "Visible to others" : "Hidden from radar")
-                                    .font(.caption)
-                                    .foregroundColor(.white.opacity(0.6))
-                            }
-                        }
-                        
-                        Spacer()
-                        
-                        // Enhanced toggle with state feedback
-                        Button(action: {
-                            withAnimation(.spring()) {
-                                locationManager.toggleVisibility()
-                            }
-                        }) {
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(locationManager.isVisible ? Color.cyan : Color.gray.opacity(0.3))
-                                .frame(width: 60, height: 34)
-                                .overlay(
-                                    Circle()
-                                        .fill(Color.white)
-                                        .frame(width: 30, height: 30)
-                                        .offset(x: locationManager.isVisible ? 13 : -13)
-                                        .animation(.spring(response: 0.3), value: locationManager.isVisible)
-                                )
-                                .shadow(color: locationManager.isVisible ? .cyan.opacity(0.5) : .clear, radius: 8)
-                        }
-                    }
-                    .padding(24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(Color.white.opacity(0.05))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .stroke(locationManager.isVisible ? Color.cyan.opacity(0.3) : Color.white.opacity(0.1), lineWidth: 2)
-                            )
-                    )
-                    
-                    // AI Insights with cyan accent
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Text("🧠 AI Insights")
-                                .font(.title3)
-                                .fontWeight(.medium)
-                                .foregroundColor(.cyan)
-                            Spacer()
-                        }
-                        
-                        Text("Found 4 people nearby with shared experiences from your recent answers. Alex has the highest compatibility based on reading habits and daily routines.")
-                            .font(.body)
-                            .foregroundColor(.white.opacity(0.9))
-                            .multilineTextAlignment(.leading)
-                    }
-                    .padding(24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(Color.white.opacity(0.05))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .stroke(Color.cyan.opacity(0.3), lineWidth: 2)
-                            )
-                    )
+                    // AI Insights
+                    aiInsightsSection
                     
                     Spacer(minLength: 100)
                 }
@@ -277,8 +38,6 @@ struct GlassRadarView: View {
             .onAppear {
                 locationManager.requestLocationPermission()
                 updateMatches()
-                
-                // Start with scanning enabled
                 isScanning = true
             }
             .sheet(isPresented: $showingUserDetails) {
@@ -293,7 +52,238 @@ struct GlassRadarView: View {
         }
     }
     
-    // Enhanced sample matches with better positioning
+    // MARK: - View Components
+    
+    private var headerView: some View {
+        VStack(spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Icebreaker")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                    
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(isScanning ? Color.green : Color.orange)
+                            .frame(width: 8, height: 8)
+                            .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: isScanning)
+                        
+                        Text("AI Radar • \(isScanning ? "Scanning" : "Paused")")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation(.spring()) {
+                        isScanning.toggle()
+                        scanToggle.toggle()
+                    }
+                }) {
+                    Image(systemName: isScanning ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.cyan)
+                }
+            }
+            
+            // Stats bar
+            HStack(spacing: 20) {
+                StatItem(number: "4", label: "Nearby")
+                StatItem(number: "89%", label: "Best Match")
+                StatItem(number: "\(Int(locationManager.visibilityRange))m", label: "Range")
+            }
+            .padding(.horizontal)
+        }
+        .padding(.top, 20)
+    }
+    
+    private var radarSection: some View {
+        ZStack {
+            // Radar Container
+            radarContainer
+            
+            // Match Popup
+            if showingMatchPopup, let match = selectedUserForPopup {
+                VStack {
+                    MatchPopupView(match: match)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.8)),
+                            removal: .move(edge: .top).combined(with: .opacity)
+                        ))
+                        .zIndex(1)
+                    Spacer()
+                }
+            }
+        }
+    }
+    
+    private var radarContainer: some View {
+        ZStack {
+            // Radar sweep view
+            RadarSweepView(isActive: isScanning)
+                .scaleEffect(scanToggle ? 1.05 : 1.0)
+                .animation(.spring(response: 0.6, dampingFraction: 0.8), value: scanToggle)
+            
+            // User dots
+            userDotsView
+            
+            // Interactive overlay
+            Button(action: {
+                showingMatchesList = true
+            }) {
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(width: 280, height: 280)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .frame(height: 380)
+    }
+    
+    private var userDotsView: some View {
+        ForEach(sampleMatches(), id: \.user.id) { match in
+            UserRadarDot(
+                match: match,
+                isScanning: isScanning,
+                onTap: {
+                    selectedUserForPopup = match
+                    withAnimation(.spring()) {
+                        showingMatchPopup = true
+                    }
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                        withAnimation(.easeOut) {
+                            showingMatchPopup = false
+                        }
+                    }
+                }
+            )
+        }
+    }
+    
+    private var controlsSection: some View {
+        VStack(spacing: 16) {
+            // Visibility Range Control
+            visibilityRangeControl
+            
+            // Broadcasting Toggle
+            broadcastingToggle
+        }
+    }
+    
+    private var visibilityRangeControl: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Text("Visibility Range")
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Text("\(Int(locationManager.visibilityRange))m")
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundColor(.cyan)
+            }
+            
+            SliderView(visibilityRange: $locationManager.visibilityRange)
+        }
+        .padding(24)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                )
+        )
+    }
+    
+    private var broadcastingToggle: some View {
+        HStack {
+            HStack(spacing: 12) {
+                Text("🎯")
+                    .font(.title2)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Broadcasting Location")
+                        .font(.title3)
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                    
+                    Text(locationManager.isVisible ? "Visible to others" : "Hidden from radar")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                withAnimation(.spring()) {
+                    locationManager.toggleVisibility()
+                }
+            }) {
+                toggleView
+            }
+        }
+        .padding(24)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(locationManager.isVisible ? Color.cyan.opacity(0.3) : Color.white.opacity(0.1), lineWidth: 2)
+                )
+        )
+    }
+    
+    private var toggleView: some View {
+        RoundedRectangle(cornerRadius: 20)
+            .fill(locationManager.isVisible ? Color.cyan : Color.gray.opacity(0.3))
+            .frame(width: 60, height: 34)
+            .overlay(
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 30, height: 30)
+                    .offset(x: locationManager.isVisible ? 13 : -13)
+                    .animation(.spring(response: 0.3), value: locationManager.isVisible)
+            )
+            .shadow(color: locationManager.isVisible ? .cyan.opacity(0.5) : .clear, radius: 8)
+    }
+    
+    private var aiInsightsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("🧠 AI Insights")
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .foregroundColor(.cyan)
+                Spacer()
+            }
+            
+            Text("Found 4 people nearby with shared experiences from your recent answers. Alex has the highest compatibility based on reading habits and daily routines.")
+                .font(.body)
+                .foregroundColor(.white.opacity(0.9))
+                .multilineTextAlignment(.leading)
+        }
+        .padding(24)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color.cyan.opacity(0.3), lineWidth: 2)
+                )
+        )
+    }
+    
+    // MARK: - Helper Methods
+    
     private func sampleMatches() -> [MatchResult] {
         let matches = [
             createSampleMatch(letter: "A", color: .green, position: CGPoint(x: 45, y: -30), matchPercent: 89, summary: "Both love morning coffee routines"),
@@ -315,12 +305,9 @@ struct GlassRadarView: View {
             age: 28,
             bio: summary,
             location: "San Francisco",
-            profileImageURL: nil,
-            interests: ["fitness", "coffee", "hiking"],
-            createdAt: Date()
+            interests: ["fitness", "coffee", "hiking"]
         )
         
-        // Set location and radar position
         var updatedUser = user
         updatedUser.latitude = 37.7749
         updatedUser.longitude = -122.4194
@@ -328,9 +315,6 @@ struct GlassRadarView: View {
         updatedUser.isOnline = true
         updatedUser.lastSeen = Date()
         updatedUser.isVisible = true
-        
-        // Store radar position in a custom property (you may need to add this to User model)
-        // For now, we'll use the firstName to store the letter
         updatedUser.firstName = letter
         
         return MatchResult(
@@ -338,15 +322,24 @@ struct GlassRadarView: View {
             compatibilityScore: Double(matchPercent) / 100.0,
             sharedAnswers: [],
             aiInsight: summary,
-            distance: 15.0,
-            matchedAt: Date()
+            distance: 15.0
         )
+    }
+    
+    // Helper function to calculate radar position for a user
+    private func radarPosition(for user: User) -> CGPoint {
+        let hash = abs(user.id.hashValue)
+        let x = Double((hash % 200) - 100) // -100 to 100
+        let y = Double(((hash / 200) % 200) - 100) // -100 to 100
+        return CGPoint(x: x, y: y)
     }
 }
 
+// MARK: - Supporting Views
+
 struct UserRadarDot: View {
     let match: MatchResult
-    var isScanning: Bool = true // Add the missing parameter
+    var isScanning: Bool = true
     let onTap: () -> Void
     @State private var isPulsing = false
     
@@ -359,16 +352,22 @@ struct UserRadarDot: View {
         }
     }
     
+    // Helper function to calculate radar position for a user
+    private func radarPosition(for user: User) -> CGPoint {
+        let hash = abs(user.id.hashValue)
+        let x = Double((hash % 200) - 100) // -100 to 100
+        let y = Double(((hash / 200) % 200) - 100) // -100 to 100
+        return CGPoint(x: x, y: y)
+    }
+    
     var body: some View {
         Button(action: onTap) {
             ZStack {
-                // Outer glow
                 Circle()
                     .fill(dotColor.opacity(0.3))
                     .frame(width: isPulsing ? 32 : 28)
                     .blur(radius: 6)
                 
-                // Main dot
                 Circle()
                     .fill(dotColor)
                     .frame(width: 24, height: 24)
@@ -380,7 +379,7 @@ struct UserRadarDot: View {
                     .shadow(color: dotColor, radius: 8)
             }
         }
-        .offset(x: match.user.radarPosition.x, y: match.user.radarPosition.y)
+        .offset(x: radarPosition(for: match.user).x, y: radarPosition(for: match.user).y)
         .onAppear {
             withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
                 isPulsing.toggle()
@@ -389,7 +388,6 @@ struct UserRadarDot: View {
     }
 }
 
-// MARK: - Helper function for display names
 private func getDisplayName(for letter: String) -> String {
     switch letter {
     case "M": return "Maya"
@@ -459,24 +457,6 @@ struct GlassToggle: View {
                         .shadow(color: .black.opacity(0.2), radius: 2)
                 )
                 .animation(.easeInOut(duration: 0.2), value: isOn)
-        }
-    }
-}
-
-struct StatItem: View {
-    let number: String
-    let label: String
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(number)
-                .font(.title3)
-                .fontWeight(.bold)
-                .foregroundColor(.cyan)
-            
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.7))
         }
     }
 }
@@ -705,6 +685,30 @@ struct MatchPopupView: View {
         )
         .padding(.horizontal, 20)
         .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
+    }
+}
+
+struct SliderView: View {
+    @Binding var visibilityRange: Double
+    
+    var body: some View {
+        HStack {
+            // Min label
+            Text("5m")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.7))
+                .frame(width: 30, alignment: .leading)
+            
+            // Slider
+            CustomSlider(value: $visibilityRange, range: 5...50)
+                .accentColor(.cyan)
+            
+            // Max label
+            Text("50m")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.7))
+                .frame(width: 30, alignment: .trailing)
+        }
     }
 }
 

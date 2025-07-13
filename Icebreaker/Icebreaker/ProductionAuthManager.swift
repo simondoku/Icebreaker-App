@@ -20,7 +20,9 @@ class ProductionAuthManager: ObservableObject {
         errorMessage = ""
         
         // Simulate API call
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            
             // Basic validation
             guard !email.isEmpty, !password.isEmpty, !firstName.isEmpty else {
                 self.errorMessage = "Please fill in all fields"
@@ -66,7 +68,9 @@ class ProductionAuthManager: ObservableObject {
         errorMessage = ""
         
         // Simulate API call
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            
             // For demo purposes, any valid email/password works
             guard !email.isEmpty, !password.isEmpty else {
                 self.errorMessage = "Please fill in all fields"
@@ -83,10 +87,16 @@ class ProductionAuthManager: ObservableObject {
             }
             
             // Create or load user
+            let userFirstName: String
+            if let emailPrefix = email.components(separatedBy: "@").first, !emailPrefix.isEmpty {
+                userFirstName = emailPrefix.capitalized
+            } else {
+                userFirstName = "User"
+            }
             let user = AppUser(
                 id: UUID().uuidString,
                 email: email,
-                firstName: email.components(separatedBy: "@").first?.capitalized ?? "User",
+                firstName: userFirstName,
                 createdAt: Date(),
                 isVisible: true,
                 visibilityRange: 25.0

@@ -18,10 +18,11 @@ class FirebaseUserService: ObservableObject {
     @Published var error: FirebaseServiceError?
     
     private var nearbyUsersListener: ListenerRegistration?
+    private var authStateListener: AuthStateDidChangeListenerHandle?
     
     init() {
         // Listen for auth state changes
-        auth.addStateDidChangeListener { [weak self] _, user in
+        authStateListener = auth.addStateDidChangeListener { [weak self] _, user in
             if let user = user {
                 Task {
                     await self?.loadCurrentUser(userId: user.uid)
@@ -41,22 +42,22 @@ class FirebaseUserService: ObservableObject {
             throw FirebaseServiceError.notAuthenticated
         }
         
-        // Create a new User instance with the Firebase UID
+        // Create a new User instance with the Firebase UID using the correct initializer
         let userData = User(
             id: currentUser.uid,
             firstName: user.firstName,
             age: user.age,
             bio: user.bio,
             location: user.location,
-            profileImageURL: user.profileImageURL,
-            interests: user.interests,
-            createdAt: user.createdAt
+            interests: user.interests
         )
         
-        // Set additional properties
+        // Set additional properties after initialization
         var finalUserData = userData
         finalUserData.lastSeen = Date()
         finalUserData.isOnline = true
+        finalUserData.profileImageURL = user.profileImageURL
+        finalUserData.createdAt = user.createdAt
         
         do {
             try db.collection("users").document(currentUser.uid).setData(from: finalUserData)
@@ -185,8 +186,8 @@ class FirebaseUserService: ObservableObject {
                         
                         // Calculate actual distance
                         if let userLat = user.latitude, let userLng = user.longitude {
-                            let userLocation = CLLocation(latitude: userLat, longitude: userLng)
-                            let distance = userLocation.distance(from: userLocation)
+                            let otherUserLocation = CLLocation(latitude: userLat, longitude: userLng)
+                            let distance = userLocation.distance(from: otherUserLocation)
                             
                             if distance <= radiusKm * 1000 { // Convert km to meters
                                 user.distanceFromUser = distance
@@ -303,6 +304,9 @@ class FirebaseUserService: ObservableObject {
     
     deinit {
         stopListeningForNearbyUsers()
+        if let authStateListener = authStateListener {
+            Auth.auth().removeStateDidChangeListener(authStateListener)
+        }
     }
 }
 

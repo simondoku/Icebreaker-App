@@ -22,8 +22,9 @@ struct IcebreakerApp: App {
 struct ContentView: View {
     @StateObject private var authManager = FirebaseAuthManager()
     @StateObject private var questionManager = AIQuestionManager()
-    @StateObject private var chatManager = IcebreakerChatManager()
-    @StateObject private var matchEngine = MatchEngine()
+    @StateObject private var chatManager = IcebreakerChatManager.shared
+    @StateObject private var locationManager = LocationManager()
+    @StateObject private var matchEngine = MatchEngine.shared
     
     var body: some View {
         ZStack {
@@ -41,6 +42,7 @@ struct ContentView: View {
         .environmentObject(authManager)
         .environmentObject(questionManager)
         .environmentObject(chatManager)
+        .environmentObject(locationManager)
         .environmentObject(matchEngine)
         .preferredColorScheme(.dark)
     }
@@ -173,43 +175,11 @@ struct OnboardingFlow: View {
     }
 }
 
-// MARK: - Modern UI Components
-
-struct ModernTextField: View {
-    @Binding var text: String
-    let placeholder: String
-    let icon: String
-    var isSecure: Bool = false
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .foregroundColor(.cyan)
-                .frame(width: 20)
-            
-            if isSecure {
-                SecureField(placeholder, text: $text)
-                    .foregroundColor(.white)
-            } else {
-                TextField(placeholder, text: $text)
-                    .foregroundColor(.white)
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                )
-        )
-    }
-}
+// MARK: - Permission Screens
 
 struct LocationPermissionScreen: View {
     @EnvironmentObject var authManager: FirebaseAuthManager
-    @State private var locationManager = CLLocationManager()
+    @EnvironmentObject var locationManager: LocationManager
     @Binding var currentStep: Int
     
     var body: some View {
@@ -235,7 +205,7 @@ struct LocationPermissionScreen: View {
             
             VStack(spacing: 16) {
                 Button("Enable Location") {
-                    locationManager.requestWhenInUseAuthorization()
+                    locationManager.requestLocationPermission()
                     // Navigate to next step
                     withAnimation {
                         currentStep = 3
@@ -432,13 +402,6 @@ struct MainTabView: View {
             let appearance = UITabBarAppearance()
             appearance.configureWithOpaqueBackground()
             appearance.backgroundColor = UIColor.black.withAlphaComponent(0.8)
-            
-            // Configure badge appearance
-            appearance.stackedLayoutAppearance.normal.badgeBackgroundColor = UIColor.systemRed
-            appearance.stackedLayoutAppearance.normal.badgeTextAttributes = [
-                .foregroundColor: UIColor.white,
-                .font: UIFont.systemFont(ofSize: 12, weight: .medium)
-            ]
             
             UITabBar.appearance().standardAppearance = appearance
             UITabBar.appearance().scrollEdgeAppearance = appearance

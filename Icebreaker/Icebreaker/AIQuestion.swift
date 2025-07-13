@@ -2,22 +2,33 @@ import Foundation
 import SwiftUI
 import Combine
 
-// MARK: - Forward declare CompatibilityAnalysis to avoid ambiguity
-// This is defined in AIService.swift
-typealias AICompatibilityAnalysis = CompatibilityAnalysis
+// MARK: - AI Analysis Models
+struct CompatibilityAnalysis: Codable {
+    let score: Double
+    let reason: String
+    let sharedTopics: [String]
+    
+    init(score: Double, reason: String, sharedTopics: [String] = []) {
+        self.score = score
+        self.reason = reason
+        self.sharedTopics = sharedTopics
+    }
+}
 
 // MARK: - AI Question Models
 struct AIQuestion: Identifiable, Codable {
     let id: UUID
     let text: String
     let category: QuestionCategory
+    let difficulty: QuestionDifficulty
     var createdAt: Date
     
-    init(text: String, category: QuestionCategory) {
-        self.id = UUID()
+    init(id: UUID = UUID(), text: String, category: QuestionCategory, difficulty: QuestionDifficulty = .medium, createdAt: Date = Date()) {
+        self.id = id
         self.text = text
         self.category = category
-        self.createdAt = Date()
+        self.difficulty = difficulty
+        self.createdAt = createdAt
     }
     
     enum QuestionCategory: String, CaseIterable, Codable {
@@ -41,42 +52,13 @@ struct AIQuestion: Identifiable, Codable {
             return rawValue.capitalized
         }
     }
+    
+    enum QuestionDifficulty: String, CaseIterable, Codable {
+        case easy, medium, hard
+    }
 }
 
-struct AIAnswer: Identifiable, Codable {
-    var id: UUID
-    let questionId: UUID
-    let text: String
-    var createdAt: Date
-    
-    // Custom initializer for creating new answers
-    init(questionId: UUID, text: String) {
-        self.id = UUID()
-        self.questionId = questionId
-        self.text = text
-        self.createdAt = Date()
-    }
-    
-    // Codable initializer for decoding from storage
-    init(id: UUID, questionId: UUID, text: String, createdAt: Date) {
-        self.id = id
-        self.questionId = questionId
-        self.text = text
-        self.createdAt = createdAt
-    }
-    
-    // Enhanced similarity calculation using AI service
-    func similarity(to other: AIAnswer) -> Double {
-        // Fallback to simple word matching if AI service is unavailable
-        let words1 = Set(text.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        let words2 = Set(other.text.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        
-        let commonWords = words1.intersection(words2)
-        let totalWords = words1.union(words2)
-        
-        return totalWords.isEmpty ? 0 : Double(commonWords.count) / Double(totalWords.count)
-    }
-}
+// Note: The 'AIAnswer' model is now defined in SharedModels.swift.
 
 // Enhanced AI Question Manager with real AI integration
 class AIQuestionManager: ObservableObject {
@@ -169,7 +151,11 @@ class AIQuestionManager: ObservableObject {
     func submitAnswer(_ text: String) {
         guard let question = currentQuestion else { return }
         
-        let answer = AIAnswer(questionId: question.id, text: text)
+        let answer = AIAnswer(
+            questionId: question.id.uuidString,
+            questionText: question.text,
+            answer: text
+        )
         userAnswers.append(answer)
         saveAnswers()
         
@@ -273,8 +259,8 @@ class AIQuestionManager: ObservableObject {
             userAnswers[index] = AIAnswer(
                 id: answer.id,
                 questionId: answer.questionId,
-                text: newText,
-                createdAt: answer.createdAt
+                questionText: answer.questionText,
+                answer: newText
             )
             saveAnswers()
         }

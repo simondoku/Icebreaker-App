@@ -21,10 +21,9 @@ struct PersistenceController {
         do {
             try viewContext.save()
         } catch {
-            // Replace this implementation with code to handle the error appropriately.
-            // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-            let nsError = error as NSError
-            fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+            // Log error instead of crashing in preview
+            print("❌ Preview CoreData Error: \(error)")
+            // Don't crash previews - just continue with empty context
         }
         return result
     }()
@@ -34,22 +33,44 @@ struct PersistenceController {
     init(inMemory: Bool = false) {
         container = NSPersistentContainer(name: "Icebreaker")
         if inMemory {
-            container.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")
+            container.persistentStoreDescriptions.first?.url = URL(fileURLWithPath: "/dev/null")
         }
-        container.loadPersistentStores(completionHandler: { (storeDescription, error) in
+        container.loadPersistentStores(completionHandler: { [container] (storeDescription, error) in
             if let error = error as NSError? {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-
-                /*
-                 Typical reasons for an error here include:
-                 * The parent directory does not exist, cannot be created, or disallows writing.
-                 * The persistent store is not accessible, due to permissions or data protection when the device is locked.
-                 * The device is out of space.
-                 * The store could not be migrated to the current model version.
-                 Check the error message to determine what the actual problem was.
-                 */
-                fatalError("Unresolved error \(error), \(error.userInfo)")
+                // Log error instead of crashing in production
+                print("❌ CoreData Error: \(error), \(error.userInfo)")
+                
+                // Try to recover by creating a new store
+                let coordinator = container.persistentStoreCoordinator
+                let store = coordinator.persistentStores.first
+                
+                if let store = store {
+                    do {
+                        try coordinator.remove(store)
+                        try coordinator.addPersistentStore(
+                            ofType: NSSQLiteStoreType,
+                            configurationName: nil,
+                            at: store.url,
+                            options: [NSMigratePersistentStoresAutomaticallyOption: true,
+                                     NSInferMappingModelAutomaticallyOption: true]
+                        )
+                        print("✅ CoreData store recovered")
+                    } catch {
+                        print("❌ Failed to recover CoreData store: \(error)")
+                        // As a last resort, create an in-memory store
+                        do {
+                            _ = try coordinator.addPersistentStore(
+                                ofType: NSInMemoryStoreType,
+                                configurationName: nil,
+                                at: nil,
+                                options: nil
+                            )
+                            print("✅ Created fallback in-memory store")
+                        } catch {
+                            print("❌ Critical: Failed to create fallback store: \(error)")
+                        }
+                    }
+                }
             }
         })
         container.viewContext.automaticallyMergesChangesFromParent = true

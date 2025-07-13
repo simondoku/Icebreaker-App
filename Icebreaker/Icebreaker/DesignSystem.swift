@@ -2,6 +2,7 @@
 // Glass Morphism & Apple-inspired UI Components
 
 import SwiftUI
+import CoreLocation
 
 // MARK: - Color Extensions
 extension Color {
@@ -52,6 +53,33 @@ extension View {
     }
 }
 
+// MARK: - Glass Card Component
+struct GlassCard<Content: View>: View {
+    let content: Content
+    let intensity: Double
+    let cornerRadius: CGFloat
+    
+    init(intensity: Double = 0.1, cornerRadius: CGFloat = 20, @ViewBuilder content: () -> Content) {
+        self.intensity = intensity
+        self.cornerRadius = cornerRadius
+        self.content = content()
+    }
+    
+    var body: some View {
+        content
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.white.opacity(intensity))
+                    .background(.ultraThinMaterial.opacity(0.8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    )
+            )
+    }
+}
+
 // MARK: - Animated Background
 struct AnimatedBackground: View {
     @State private var animateGradient = false
@@ -91,25 +119,6 @@ struct AnimatedBackground: View {
                 }
             }
         )
-    }
-}
-
-// MARK: - Missing UI Components
-
-// MARK: - Glass Card Component
-struct GlassCard<Content: View>: View {
-    let content: Content
-    let padding: CGFloat
-    
-    init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
-        self.content = content()
-        self.padding = padding
-    }
-    
-    var body: some View {
-        content
-            .padding(padding)
-            .glassMorphism()
     }
 }
 
@@ -157,39 +166,36 @@ struct StatusIndicator: View {
     }
 }
 
-// MARK: - Glass Button Style
-struct GlassButtonStyle: ButtonStyle {
-    let isSecondary: Bool
+// MARK: - ModernTextField Component
+struct ModernTextField: View {
+    @Binding var text: String
+    let placeholder: String
+    let icon: String
+    var isSecure: Bool = false
     
-    init(isSecondary: Bool = false) {
-        self.isSecondary = isSecondary
-    }
-    
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                Group {
-                    if isSecondary {
-                        Color.white.opacity(0.1)
-                    } else {
-                        LinearGradient(
-                            colors: [Color.cyan, Color.blue],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    }
-                }
-            )
-            .foregroundColor(isSecondary ? .white : .white)
-            .cornerRadius(16)
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-            )
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: icon)
+                .foregroundColor(.cyan)
+                .frame(width: 20)
+            
+            if isSecure {
+                SecureField(placeholder, text: $text)
+                    .foregroundColor(.white)
+            } else {
+                TextField(placeholder, text: $text)
+                    .foregroundColor(.white)
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -341,6 +347,42 @@ struct RadarSweepView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Glass Button Style
+struct GlassButtonStyle: ButtonStyle {
+    let isSecondary: Bool
+    
+    init(isSecondary: Bool = false) {
+        self.isSecondary = isSecondary
+    }
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .fontWeight(.semibold)
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        isSecondary
+                        ? AnyShapeStyle(Color.white.opacity(0.1))
+                        : AnyShapeStyle(LinearGradient(
+                            colors: [.blue, .cyan],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.white.opacity(isSecondary ? 0.3 : 0.0), lineWidth: 1)
+                    )
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 

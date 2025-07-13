@@ -60,11 +60,8 @@ class FirebaseAuthManager: ObservableObject {
                 // Create user and profile
                 let user = IcebreakerUser(
                     id: UUID().uuidString,
-                    email: email,
                     firstName: firstName,
-                    createdAt: Date(),
-                    isVisible: true,
-                    visibilityRange: 25.0
+                    email: email
                 )
                 
                 let profile = IcebreakerUserProfile(
@@ -126,13 +123,11 @@ class FirebaseAuthManager: ObservableObject {
                 }
                 
                 // Create or load user
+                let userFirstName = email.components(separatedBy: "@").first?.capitalized ?? "User"
                 let user = IcebreakerUser(
                     id: UUID().uuidString,
-                    email: email,
-                    firstName: email.components(separatedBy: "@").first?.capitalized ?? "User",
-                    createdAt: Date(),
-                    isVisible: true,
-                    visibilityRange: 25.0
+                    firstName: userFirstName,
+                    email: email
                 )
                 
                 let profile = IcebreakerUserProfile(
@@ -267,29 +262,13 @@ class FirebaseAuthManager: ObservableObject {
     }
 }
 
-// MARK: - Unique Data Models (Prefixed to avoid conflicts)
-
-struct IcebreakerUser: Codable, Identifiable {
-    let id: String
-    let email: String
-    var firstName: String
-    let createdAt: Date
-    var isVisible: Bool
-    var visibilityRange: Double
-    var location: LocationPoint?
-    var answers: [String] = []
-    var lastActive: Date = Date()
-    
-    struct LocationPoint: Codable {
-        let latitude: Double
-        let longitude: Double
-    }
-    
-    var isActiveNow: Bool {
-        Date().timeIntervalSince(lastActive) < 300 // 5 minutes
-    }
+// MARK: - Location Point for IcebreakerUser
+struct IcebreakerGeoPoint: Codable {
+    let latitude: Double
+    let longitude: Double
 }
 
+// Additional profile model that extends the base IcebreakerUser
 struct IcebreakerUserProfile: Codable, Identifiable {
     var id: String?
     let uid: String
@@ -308,9 +287,4 @@ struct IcebreakerUserProfile: Codable, Identifiable {
     var isActiveNow: Bool {
         Date().timeIntervalSince(lastActive) < 300 // 5 minutes
     }
-}
-
-struct IcebreakerGeoPoint: Codable {
-    let latitude: Double
-    let longitude: Double
 }
