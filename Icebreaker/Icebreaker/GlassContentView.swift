@@ -23,6 +23,7 @@ struct ContentView: View {
     @StateObject private var authManager = FirebaseAuthManager()
     @StateObject private var questionManager = AIQuestionManager()
     @StateObject private var chatManager = IcebreakerChatManager.shared
+    @StateObject private var realTimeChatManager = RealTimeChatManager.shared
     @StateObject private var locationManager = LocationManager()
     @StateObject private var matchEngine = MatchEngine.shared
     
@@ -42,9 +43,14 @@ struct ContentView: View {
         .environmentObject(authManager)
         .environmentObject(questionManager)
         .environmentObject(chatManager)
+        .environmentObject(realTimeChatManager)
         .environmentObject(locationManager)
         .environmentObject(matchEngine)
         .preferredColorScheme(.dark)
+        .onAppear {
+            // Connect LocationManager with FirebaseAuthManager
+            locationManager.setAuthManager(authManager)
+        }
     }
 }
 

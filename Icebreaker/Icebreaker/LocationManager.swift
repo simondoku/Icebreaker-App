@@ -7,12 +7,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = LocationManager()
     
     private let locationManager = CLLocationManager()
-    // Make Firebase service optional and lazy to avoid early initialization
-    private var firebaseUserService: FirebaseUserService? {
-        // Only create if Firebase is configured
-        guard FirebaseApp.app() != nil else { return nil }
-        return FirebaseUserService.shared
-    }
+    // Reference to the auth manager for location updates
+    private weak var authManager: FirebaseAuthManager?
     
     @Published var location: CLLocation?
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
@@ -27,6 +23,11 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 10.0 // Update every 10 meters
         authorizationStatus = locationManager.authorizationStatus
+    }
+    
+    // Set the auth manager reference
+    func setAuthManager(_ authManager: FirebaseAuthManager) {
+        self.authManager = authManager
     }
     
     func requestLocationPermission() {
@@ -59,18 +60,15 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.stopUpdatingLocation()
         isLocationEnabled = false
         
-        // Update visibility in Firebase
-        Task {
-            await updateFirebaseVisibility(false)
-        }
+        // Update visibility using auth manager
+        authManager?.updateVisibility(isVisible: false)
     }
     
     func toggleVisibility() {
         isVisible.toggle()
         
-        Task {
-            await updateFirebaseVisibility(isVisible)
-        }
+        // Update visibility using auth manager
+        authManager?.updateVisibility(isVisible: isVisible)
         
         if isVisible && (authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways) {
             startLocationUpdates()
@@ -81,11 +79,13 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     func updateVisibilityRange(_ range: Double) {
         visibilityRange = range
+        
+        // Update visibility range using auth manager
+        authManager?.updateVisibilityRange(range)
+        
         // Trigger location update to refresh nearby users
         if let location = location, isVisible {
-            Task {
-                await updateUserLocationInFirebase(location)
-            }
+            authManager?.updateLocation(location)
         }
     }
     
@@ -103,9 +103,14 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationError = nil
         
         if isVisible {
-            Task {
-                await updateUserLocationInFirebase(newLocation)
-            }
+            // Update location using auth manager
+            authManager?.updateLocation(newLocation)
+            
+            // Post notification for other parts of app
+            NotificationCenter.default.post(
+                name: .userLocationUpdated,
+                object: newLocation
+            )
         }
     }
     
@@ -123,6 +128,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 self.locationError = .permissionDenied
                 self.isLocationEnabled = false
                 self.isVisible = false
+                self.authManager?.updateVisibility(isVisible: false)
             case .notDetermined:
                 break
             @unknown default:
@@ -148,43 +154,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 self.locationError = .unknownError(error.localizedDescription)
             }
             print("Location error: \(error.localizedDescription)")
-        }
-    }
-    
-    // MARK: - Firebase Integration
-    private func updateUserLocationInFirebase(_ location: CLLocation) async {
-        guard let userId = Auth.auth().currentUser?.uid else {
-            await MainActor.run {
-                self.locationError = .notAuthenticated
-            }
-            return
-        }
-        
-        do {
-            try await firebaseUserService?.updateUserLocation(location, userId: userId)
-        } catch {
-            await MainActor.run {
-                self.locationError = .firebaseError(error)
-            }
-            print("Failed to update location in Firebase: \(error)")
-        }
-    }
-    
-    private func updateFirebaseVisibility(_ isVisible: Bool) async {
-        guard let userId = Auth.auth().currentUser?.uid else {
-            await MainActor.run {
-                self.locationError = .notAuthenticated
-            }
-            return
-        }
-        
-        do {
-            try await firebaseUserService?.setUserVisibility(isVisible, userId: userId)
-        } catch {
-            await MainActor.run {
-                self.locationError = .firebaseError(error)
-            }
-            print("Failed to update visibility in Firebase: \(error)")
         }
     }
     

@@ -10,13 +10,15 @@ import Combine
 
 // MARK: - Missing Services and Types
 
-// Match Interaction Service
+// Match Interaction Service with Firebase Integration
 class MatchInteractionService: ObservableObject {
     static let shared = MatchInteractionService()
     
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var userInteractions: [String: MatchInteraction] = [:]
+    
+    private let chatManager = RealTimeChatManager.shared
     
     private init() {}
     
@@ -57,31 +59,56 @@ class MatchInteractionService: ObservableObject {
             isLoading = true
         }
         
-        // Simulate API call
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        
-        await MainActor.run {
-            isLoading = false
-            // Store the intro interaction
-            userInteractions[match.user.id] = MatchInteraction(
-                id: UUID().uuidString,
-                userId: match.user.id,
-                type: .introSent,
-                timestamp: Date(),
-                message: message
+        do {
+            // Create real Firebase conversation
+            let conversation = await chatManager.createConversation(
+                with: match.user.id, 
+                userName: match.user.firstName
             )
+            
+            guard let conversation = conversation else {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.errorMessage = "Failed to create conversation"
+                }
+                return nil
+            }
+            
+            // Send the intro message
+            await chatManager.sendMessage(message, to: conversation.id)
+            
+            await MainActor.run {
+                self.isLoading = false
+                // Store the intro interaction
+                self.userInteractions[match.user.id] = MatchInteraction(
+                    id: UUID().uuidString,
+                    userId: match.user.id,
+                    type: .introSent,
+                    timestamp: Date(),
+                    message: message
+                )
+            }
+            
+            print("✅ Intro message sent to Firebase")
+            
+            // Return compatible conversation object
+            return IcebreakerChatConversation(
+                id: conversation.id,
+                matchId: match.user.id,
+                otherUserName: match.user.firstName,
+                lastMessage: message,
+                lastMessageTime: Date(),
+                unreadCount: 0,
+                status: .introSent
+            )
+            
+        } catch {
+            await MainActor.run {
+                self.isLoading = false
+                self.errorMessage = "Failed to send intro message: \(error.localizedDescription)"
+            }
+            return nil
         }
-        
-        // Create a limited conversation for intro message only
-        return IcebreakerChatConversation(
-            id: UUID().uuidString,
-            matchId: match.user.id,
-            otherUserName: match.user.firstName,
-            lastMessage: message,
-            lastMessageTime: Date(),
-            unreadCount: 0,
-            status: .introSent
-        )
     }
     
     func sendWave(to match: MatchResult) async -> Bool {
@@ -89,7 +116,8 @@ class MatchInteractionService: ObservableObject {
             isLoading = true
         }
         
-        // Simulate API call
+        // For now, we'll simulate wave sending since waves are more of a notification
+        // In a full implementation, you'd create a "waves" collection in Firestore
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         
         await MainActor.run {
@@ -110,6 +138,7 @@ class MatchInteractionService: ObservableObject {
             userInfo: ["userName": match.user.firstName]
         )
         
+        print("✅ Wave sent to \(match.user.firstName)")
         return true
     }
     
@@ -118,29 +147,54 @@ class MatchInteractionService: ObservableObject {
             isLoading = true
         }
         
-        // Simulate API call
-        try? await Task.sleep(nanoseconds: 500_000_000)
-        
-        await MainActor.run {
-            isLoading = false
-            // Update to conversation status
-            userInteractions[match.user.id] = MatchInteraction(
-                id: UUID().uuidString,
-                userId: match.user.id,
-                type: .conversation,
-                timestamp: Date()
+        do {
+            // Create real Firebase conversation when wave is accepted
+            let conversation = await chatManager.createConversation(
+                with: match.user.id, 
+                userName: match.user.firstName
             )
+            
+            guard let conversation = conversation else {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.errorMessage = "Failed to create conversation"
+                }
+                return nil
+            }
+            
+            // Send a system message to start the conversation
+            await chatManager.sendMessage("👋 Wave accepted! Let's chat!", to: conversation.id)
+            
+            await MainActor.run {
+                self.isLoading = false
+                // Update to conversation status
+                self.userInteractions[match.user.id] = MatchInteraction(
+                    id: UUID().uuidString,
+                    userId: match.user.id,
+                    type: .conversation,
+                    timestamp: Date()
+                )
+            }
+            
+            print("✅ Wave accepted, Firebase conversation created")
+            
+            return IcebreakerChatConversation(
+                id: conversation.id,
+                matchId: match.user.id,
+                otherUserName: match.user.firstName,
+                lastMessage: "Wave accepted! Start chatting.",
+                lastMessageTime: Date(),
+                unreadCount: 0,
+                status: .connected
+            )
+            
+        } catch {
+            await MainActor.run {
+                self.isLoading = false
+                self.errorMessage = "Failed to accept wave: \(error.localizedDescription)"
+            }
+            return nil
         }
-        
-        return IcebreakerChatConversation(
-            id: UUID().uuidString,
-            matchId: match.user.id,
-            otherUserName: match.user.firstName,
-            lastMessage: "Wave accepted! Start chatting.",
-            lastMessageTime: Date(),
-            unreadCount: 0,
-            status: .connected
-        )
     }
     
     func passMatch(_ match: MatchResult) async -> Bool {
@@ -148,13 +202,20 @@ class MatchInteractionService: ObservableObject {
             isLoading = true
         }
         
-        // Simulate API call
+        // Store pass action (could also store in Firestore for analytics)
         try? await Task.sleep(nanoseconds: 500_000_000)
         
         await MainActor.run {
             isLoading = false
+            userInteractions[match.user.id] = MatchInteraction(
+                id: UUID().uuidString,
+                userId: match.user.id,
+                type: .pass,
+                timestamp: Date()
+            )
         }
         
+        print("✅ Passed on \(match.user.firstName)")
         return true
     }
     
@@ -163,13 +224,14 @@ class MatchInteractionService: ObservableObject {
             isLoading = true
         }
         
-        // Simulate API call
+        // In a real app, you'd send this to a moderation system
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         
         await MainActor.run {
             isLoading = false
         }
         
+        print("✅ Reported \(match.user.firstName) for: \(reason)")
         return true
     }
     
@@ -178,13 +240,20 @@ class MatchInteractionService: ObservableObject {
             isLoading = true
         }
         
-        // Simulate API call
+        // Store block action
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         
         await MainActor.run {
             isLoading = false
+            userInteractions[match.user.id] = MatchInteraction(
+                id: UUID().uuidString,
+                userId: match.user.id,
+                type: .block,
+                timestamp: Date()
+            )
         }
         
+        print("✅ Blocked \(match.user.firstName)")
         return true
     }
 }
@@ -787,17 +856,15 @@ struct GlassMatchListView: View {
     
     private func setupView() {
         Task {
-            await viewModel.initializeMatches(
-                currentUser: authManager.user,
-                userAnswers: questionManager.userAnswers
-            )
+            // Use real Firebase authentication and match discovery
+            await viewModel.initializeRealMatches()
         }
     }
     
     private func refreshMatches() {
         isRefreshing = true
         Task {
-            await viewModel.refreshMatches(force: true)
+            await viewModel.refreshRealMatches()
             await MainActor.run {
                 isRefreshing = false
             }
@@ -805,7 +872,7 @@ struct GlassMatchListView: View {
     }
     
     private func refreshMatchesAsync() async {
-        await viewModel.refreshMatches(force: true)
+        await viewModel.refreshRealMatches()
     }
 }
 
@@ -840,87 +907,38 @@ class MatchListViewModel: ObservableObject {
             .store(in: &cancellables)
     }
     
+    // MARK: - Real Firebase Integration Methods
+    
+    func initializeRealMatches() async {
+        await matchEngine.findMatchesForCurrentUser()
+    }
+    
+    func refreshRealMatches() async {
+        await matchEngine.refreshMatchesForCurrentUser()
+    }
+    
+    // MARK: - Legacy Methods (kept for compatibility)
+    
     func initializeMatches(currentUser: IcebreakerUser?, userAnswers: [AIAnswer]) async {
-        // Convert IcebreakerUser to User if available
-        if let icebreakerUser = currentUser {
-            let user = User(
-                id: icebreakerUser.id,
-                firstName: icebreakerUser.firstName,
-                age: 25, // Default age since IcebreakerUser doesn't have age
-                bio: "Looking for connections",
-                location: "Current Location",
-                interests: []
-            )
-            var convertedUser = user
-            convertedUser.aiAnswers = userAnswers
-            convertedUser.isVisible = icebreakerUser.isVisible
-            await matchEngine.findMatches(for: convertedUser)
-        } else {
-            await generateDemoMatches()
-        }
+        // Now uses real Firebase data instead of mock conversion
+        await initializeRealMatches()
     }
     
     func refreshMatches(force: Bool) async {
-        await generateDemoMatches()
+        await refreshRealMatches()
     }
     
     func loadMoreMatches() async {
-        // Simulate loading more matches
-        await generateDemoMatches()
+        // Real implementation would load next batch from Firestore
+        await refreshRealMatches()
     }
     
     func clearError() {
         errorMessage = ""
     }
     
-    private func generateDemoMatches() async {
-        await MainActor.run {
-            isLoading = true
-        }
-        
-        // Simulate network delay
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        
-        let demoMatches = [
-            createDemoMatch(name: "Alex", percentage: 92, distance: 8, connectionText: "📚 Both reading Atomic Habits and love morning routines"),
-            createDemoMatch(name: "Jordan", percentage: 88, distance: 12, connectionText: "🧘 Both practicing meditation and exploring mindfulness"),
-            createDemoMatch(name: "Sam", percentage: 76, distance: 15, connectionText: "🍜 Food adventurers who love trying new cuisines"),
-            createDemoMatch(name: "Taylor", percentage: 82, distance: 22, connectionText: "🎵 Music lovers with similar taste in indie rock")
-        ]
-        
-        await MainActor.run {
-            self.matches = demoMatches
-            self.isLoading = false
-            self.hasMoreMatches = false
-        }
-    }
-    
-    private func createDemoMatch(name: String, percentage: Int, distance: Int, connectionText: String) -> MatchResult {
-        let user = User(
-            id: UUID().uuidString,
-            firstName: name,
-            age: Int.random(in: 22...35),
-            bio: "Love connecting with like-minded people",
-            location: "San Francisco",
-            interests: ["reading", "fitness", "technology"]
-        )
-        
-        var updatedUser = user
-        updatedUser.latitude = 37.7749 + Double.random(in: -0.01...0.01)
-        updatedUser.longitude = -122.4194 + Double.random(in: -0.01...0.01)
-        updatedUser.distanceFromUser = Double(distance)
-        updatedUser.isOnline = Bool.random()
-        updatedUser.lastSeen = Date().addingTimeInterval(-Double.random(in: 0...3600))
-        
-        return MatchResult(
-            user: updatedUser,
-            compatibilityScore: Double(percentage) / 100.0,
-            sharedAnswers: [],
-            aiInsight: connectionText,
-            distance: Double(distance),
-            matchedAt: Date()
-        )
-    }
+    // MARK: - Demo Methods (removed - now uses real data)
+    // These methods have been replaced with real Firebase integration
 }
 
 // MARK: - Header View

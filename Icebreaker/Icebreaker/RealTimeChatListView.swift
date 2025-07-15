@@ -13,13 +13,13 @@ struct RealTimeChatListView: View {
     @State private var showingNewChatSheet = false
     
     private var filteredConversations: [RealTimeConversation] {
-        let conversations = chatManager.activeConversations
+        let conversations = chatManager.conversations // Changed from activeConversations
         
         if searchText.isEmpty {
             return conversations
         } else {
             return conversations.filter { conversation in
-                conversation.otherParticipantName(currentUserId: "current_user")
+                conversation.otherParticipantName(currentUserId: chatManager.currentUserId)
                     .localizedCaseInsensitiveContains(searchText) ||
                 conversation.lastMessage?.text
                     .localizedCaseInsensitiveContains(searchText) == true
@@ -53,7 +53,7 @@ struct RealTimeChatListView: View {
                                 ) {
                                     ChatListRowView(
                                         conversation: conversation,
-                                        currentUserId: "current_user"
+                                        currentUserId: chatManager.currentUserId
                                     )
                                 }
                                 .buttonStyle(PlainButtonStyle())

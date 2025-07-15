@@ -2,8 +2,11 @@ import SwiftUI
 import Foundation
 import Combine
 import CoreLocation
+import Firebase
+import FirebaseAuth
+import FirebaseFirestore
 
-// MARK: - Simplified Auth Manager (Compatible with Firebase when ready)
+// MARK: - Real Firebase Auth Manager
 class FirebaseAuthManager: ObservableObject {
     @Published var user: IcebreakerUser?
     @Published var userProfile: IcebreakerUserProfile?
@@ -13,9 +16,39 @@ class FirebaseAuthManager: ObservableObject {
     @Published var errorMessage = ""
     
     private var cancellables = Set<AnyCancellable>()
+    private let db = Firestore.firestore()
+    private var authStateListener: AuthStateDidChangeListenerHandle?
     
     init() {
-        loadSavedUser()
+        setupAuthStateListener()
+    }
+    
+    deinit {
+        if let listener = authStateListener {
+            Auth.auth().removeStateDidChangeListener(listener)
+        }
+    }
+    
+    // MARK: - Auth State Management
+    
+    private func setupAuthStateListener() {
+        authStateListener = Auth.auth().addStateDidChangeListener { [weak self] auth, firebaseUser in
+            Task { @MainActor in
+                guard let self = self else { return }
+                
+                if let firebaseUser = firebaseUser {
+                    // User is signed in
+                    self.isSignedIn = true
+                    await self.loadUserProfile(uid: firebaseUser.uid)
+                } else {
+                    // User is signed out
+                    self.user = nil
+                    self.userProfile = nil
+                    self.isSignedIn = false
+                    self.hasCompletedOnboarding = false
+                }
+            }
+        }
     }
     
     // MARK: - Authentication Methods
@@ -24,70 +57,57 @@ class FirebaseAuthManager: ObservableObject {
         isLoading = true
         errorMessage = ""
         
-        // Simulate Firebase API call
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self else { 
-                DispatchQueue.main.async {
+        // Validate input
+        guard !email.isEmpty, !password.isEmpty, !firstName.isEmpty else {
+            errorMessage = "Please fill in all fields"
+            isLoading = false
+            completion(false)
+            return
+        }
+        
+        guard email.contains("@") else {
+            errorMessage = "Please enter a valid email"
+            isLoading = false
+            completion(false)
+            return
+        }
+        
+        guard password.count >= 6 else {
+            errorMessage = "Password must be at least 6 characters"
+            isLoading = false
+            completion(false)
+            return
+        }
+        
+        // Create Firebase user
+        Auth.auth().createUser(withEmail: email, password: password) { [weak self] authResult, error in
+            Task { @MainActor in
+                guard let self = self else { 
                     completion(false)
-                }
-                return 
-            }
-            
-            // Ensure all UI updates happen on main thread
-            DispatchQueue.main.async {
-                // Basic validation
-                guard !email.isEmpty, !password.isEmpty, !firstName.isEmpty else {
-                    self.errorMessage = "Please fill in all fields"
-                    self.isLoading = false
-                    completion(false)
-                    return
-                }
-                
-                guard email.contains("@") else {
-                    self.errorMessage = "Please enter a valid email"
-                    self.isLoading = false
-                    completion(false)
-                    return
-                }
-                
-                guard password.count >= 6 else {
-                    self.errorMessage = "Password must be at least 6 characters"
-                    self.isLoading = false
-                    completion(false)
-                    return
+                    return 
                 }
                 
-                // Create user and profile
-                let user = IcebreakerUser(
-                    id: UUID().uuidString,
-                    firstName: firstName,
-                    email: email
-                )
-                
-                let profile = IcebreakerUserProfile(
-                    id: user.id,
-                    uid: user.id,
-                    email: email,
-                    firstName: firstName,
-                    createdAt: Date(),
-                    isVisible: true,
-                    visibilityRange: 25.0,
-                    answers: [],
-                    lastActive: Date(),
-                    location: nil,
-                    profileImageURL: "",
-                    bio: "",
-                    interests: []
-                )
-                
-                self.user = user
-                self.userProfile = profile
-                self.isSignedIn = true
-                // Don't mark onboarding as complete yet - let the onboarding flow handle this
-                self.hasCompletedOnboarding = false
                 self.isLoading = false
-                self.saveUser(user)
-                self.saveProfile(profile)
+                
+                if let error = error {
+                    self.errorMessage = error.localizedDescription
+                    completion(false)
+                    return
+                }
+                
+                guard let firebaseUser = authResult?.user else {
+                    self.errorMessage = "Failed to create user account"
+                    completion(false)
+                    return
+                }
+                
+                // Create user profile in Firestore
+                await self.createUserProfile(
+                    uid: firebaseUser.uid,
+                    email: email,
+                    firstName: firstName
+                )
+                
                 completion(true)
             }
         }
@@ -97,63 +117,44 @@ class FirebaseAuthManager: ObservableObject {
         isLoading = true
         errorMessage = ""
         
-        // Simulate Firebase API call
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self else { 
-                DispatchQueue.main.async {
+        guard !email.isEmpty, !password.isEmpty else {
+            errorMessage = "Please fill in all fields"
+            isLoading = false
+            completion(false)
+            return
+        }
+        
+        guard email.contains("@") else {
+            errorMessage = "Please enter a valid email"
+            isLoading = false
+            completion(false)
+            return
+        }
+        
+        // Sign in with Firebase
+        Auth.auth().signIn(withEmail: email, password: password) { [weak self] authResult, error in
+            Task { @MainActor in
+                guard let self = self else { 
                     completion(false)
-                }
-                return 
-            }
-            
-            // Ensure all UI updates happen on main thread
-            DispatchQueue.main.async {
-                guard !email.isEmpty, !password.isEmpty else {
-                    self.errorMessage = "Please fill in all fields"
-                    self.isLoading = false
-                    completion(false)
-                    return
-                }
-                
-                guard email.contains("@") else {
-                    self.errorMessage = "Please enter a valid email"
-                    self.isLoading = false
-                    completion(false)
-                    return
+                    return 
                 }
                 
-                // Create or load user
-                let userFirstName = email.components(separatedBy: "@").first?.capitalized ?? "User"
-                let user = IcebreakerUser(
-                    id: UUID().uuidString,
-                    firstName: userFirstName,
-                    email: email
-                )
-                
-                let profile = IcebreakerUserProfile(
-                    id: user.id,
-                    uid: user.id,
-                    email: email,
-                    firstName: user.firstName,
-                    createdAt: Date(),
-                    isVisible: true,
-                    visibilityRange: 25.0,
-                    answers: [],
-                    lastActive: Date(),
-                    location: nil,
-                    profileImageURL: "",
-                    bio: "",
-                    interests: []
-                )
-                
-                self.user = user
-                self.userProfile = profile
-                self.isSignedIn = true
-                // Existing users have completed onboarding
-                self.hasCompletedOnboarding = true
                 self.isLoading = false
-                self.saveUser(user)
-                self.saveProfile(profile)
+                
+                if let error = error {
+                    self.errorMessage = error.localizedDescription
+                    completion(false)
+                    return
+                }
+                
+                guard let firebaseUser = authResult?.user else {
+                    self.errorMessage = "Failed to sign in"
+                    completion(false)
+                    return
+                }
+                
+                // Load user profile
+                await self.loadUserProfile(uid: firebaseUser.uid)
                 completion(true)
             }
         }
@@ -161,104 +162,256 @@ class FirebaseAuthManager: ObservableObject {
     
     func completeOnboarding() {
         hasCompletedOnboarding = true
-        UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
         
-        // Also save the current user and profile to ensure persistence
-        if let user = user {
-            saveUser(user)
-        }
-        if let profile = userProfile {
-            saveProfile(profile)
-        }
+        // Update onboarding status in Firestore
+        guard let uid = Auth.auth().currentUser?.uid else { return }
         
-        print("✅ Onboarding completed and saved")
+        Task {
+            do {
+                try await db.collection("users").document(uid).updateData([
+                    "hasCompletedOnboarding": true,
+                    "lastActive": Timestamp()
+                ])
+                print("✅ Onboarding completed and saved to Firestore")
+            } catch {
+                print("❌ Error updating onboarding status: \(error)")
+            }
+        }
     }
     
     func signOut() {
-        user = nil
-        userProfile = nil
-        isSignedIn = false
-        hasCompletedOnboarding = false
-        UserDefaults.standard.removeObject(forKey: "saved_user")
-        UserDefaults.standard.removeObject(forKey: "saved_profile")
-        UserDefaults.standard.removeObject(forKey: "has_completed_onboarding")
+        do {
+            try Auth.auth().signOut()
+            // Auth state listener will handle clearing local state
+        } catch {
+            errorMessage = "Failed to sign out: \(error.localizedDescription)"
+        }
     }
     
     // MARK: - Profile Management
     
     func updateProfile(firstName: String? = nil, bio: String? = nil, interests: [String]? = nil) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
         guard var profile = userProfile else { return }
+        
+        var updates: [String: Any] = [:]
         
         if let firstName = firstName { 
             profile.firstName = firstName
             user?.firstName = firstName
+            updates["firstName"] = firstName
         }
-        if let bio = bio { profile.bio = bio }
-        if let interests = interests { profile.interests = interests }
+        if let bio = bio { 
+            profile.bio = bio
+            updates["bio"] = bio
+        }
+        if let interests = interests { 
+            profile.interests = interests
+            updates["interests"] = interests
+        }
+        
+        updates["lastActive"] = Timestamp()
         
         userProfile = profile
-        if let user = user {
-            saveUser(user)
+        
+        // Update in Firestore
+        Task {
+            do {
+                try await db.collection("users").document(uid).updateData(updates)
+            } catch {
+                print("❌ Error updating profile: \(error)")
+            }
         }
-        saveProfile(profile)
     }
     
     func updateVisibility(isVisible: Bool) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
         guard var profile = userProfile else { return }
+        
         profile.isVisible = isVisible
         profile.lastActive = Date()
         userProfile = profile
-        saveProfile(profile)
+        
+        // Update in Firestore
+        Task {
+            do {
+                try await db.collection("users").document(uid).updateData([
+                    "isVisible": isVisible,
+                    "lastActive": Timestamp()
+                ])
+            } catch {
+                print("❌ Error updating visibility: \(error)")
+            }
+        }
     }
     
     func updateVisibilityRange(_ range: Double) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
         guard var profile = userProfile else { return }
+        
         profile.visibilityRange = range
         userProfile = profile
-        saveProfile(profile)
+        
+        // Update in Firestore
+        Task {
+            do {
+                try await db.collection("users").document(uid).updateData([
+                    "visibilityRange": range,
+                    "lastActive": Timestamp()
+                ])
+            } catch {
+                print("❌ Error updating visibility range: \(error)")
+            }
+        }
     }
     
-    // MARK: - Local Storage (Replace with Firebase when ready)
+    func updateLocation(_ location: CLLocation) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        guard var profile = userProfile else { return }
+        
+        let geoPoint = IcebreakerGeoPoint(
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude
+        )
+        
+        profile.location = geoPoint
+        profile.lastActive = Date()
+        userProfile = profile
+        
+        // Update in Firestore with BOTH formats for compatibility
+        Task {
+            do {
+                try await db.collection("users").document(uid).updateData([
+                    // New nested format (for MatchEngine)
+                    "location": [
+                        "latitude": location.coordinate.latitude,
+                        "longitude": location.coordinate.longitude
+                    ],
+                    // Legacy direct format (for compatibility)
+                    "latitude": location.coordinate.latitude,
+                    "longitude": location.coordinate.longitude,
+                    "isVisible": true,
+                    "lastActive": Timestamp(),
+                    "lastLocationUpdate": Timestamp()
+                ])
+                print("✅ Location updated in Firebase: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+            } catch {
+                print("❌ Error updating location: \(error)")
+            }
+        }
+    }
     
-    private func loadSavedUser() {
-        // Load saved user
-        if let userData = UserDefaults.standard.data(forKey: "saved_user"),
-           let user = try? JSONDecoder().decode(IcebreakerUser.self, from: userData) {
+    // MARK: - Firestore Operations
+    
+    @MainActor
+    private func createUserProfile(uid: String, email: String, firstName: String) async {
+        let profile = IcebreakerUserProfile(
+            id: uid,
+            uid: uid,
+            email: email,
+            firstName: firstName,
+            createdAt: Date(),
+            isVisible: true,
+            visibilityRange: 25.0,
+            answers: [],
+            lastActive: Date(),
+            location: nil,
+            profileImageURL: "",
+            bio: "",
+            interests: [],
+            hasCompletedOnboarding: false
+        )
+        
+        let user = IcebreakerUser(
+            id: uid,
+            firstName: firstName,
+            email: email
+        )
+        
+        do {
+            // Save to Firestore
+            let profileData: [String: Any] = [
+                "uid": uid,
+                "email": email,
+                "firstName": firstName,
+                "createdAt": Timestamp(),
+                "isVisible": true,
+                "visibilityRange": 25.0,
+                "answers": [],
+                "lastActive": Timestamp(),
+                "profileImageURL": "",
+                "bio": "",
+                "interests": [],
+                "hasCompletedOnboarding": false
+            ]
+            
+            try await db.collection("users").document(uid).setData(profileData)
+            
+            // Update local state
             self.user = user
-            self.isSignedIn = true
-        }
-        
-        // Load saved profile
-        if let profileData = UserDefaults.standard.data(forKey: "saved_profile"),
-           let profile = try? JSONDecoder().decode(IcebreakerUserProfile.self, from: profileData) {
             self.userProfile = profile
-        }
-        
-        // Load onboarding completion status
-        hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "has_completed_onboarding")
-        
-        // If user exists but hasn't completed onboarding, ensure they're still signed in
-        if user != nil && !hasCompletedOnboarding {
-            isSignedIn = true
-        }
-        
-        // Debug logging
-        print("🔄 Auth State Loaded:")
-        print("   - User exists: \(user != nil)")
-        print("   - Is signed in: \(isSignedIn)")
-        print("   - Onboarding complete: \(hasCompletedOnboarding)")
-    }
-    
-    private func saveUser(_ user: IcebreakerUser) {
-        if let userData = try? JSONEncoder().encode(user) {
-            UserDefaults.standard.set(userData, forKey: "saved_user")
+            self.hasCompletedOnboarding = false
+            
+            print("✅ User profile created in Firestore")
+        } catch {
+            self.errorMessage = "Failed to create user profile: \(error.localizedDescription)"
+            print("❌ Error creating user profile: \(error)")
         }
     }
     
-    private func saveProfile(_ profile: IcebreakerUserProfile) {
-        if let profileData = try? JSONEncoder().encode(profile) {
-            UserDefaults.standard.set(profileData, forKey: "saved_profile")
+    @MainActor
+    private func loadUserProfile(uid: String) async {
+        do {
+            let document = try await db.collection("users").document(uid).getDocument()
+            
+            guard let data = document.data() else {
+                print("❌ No user profile found for uid: \(uid)")
+                return
+            }
+            
+            // Parse Firestore data
+            let profile = IcebreakerUserProfile(
+                id: uid,
+                uid: uid,
+                email: data["email"] as? String ?? "",
+                firstName: data["firstName"] as? String ?? "",
+                createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+                isVisible: data["isVisible"] as? Bool ?? true,
+                visibilityRange: data["visibilityRange"] as? Double ?? 25.0,
+                answers: data["answers"] as? [String] ?? [],
+                lastActive: (data["lastActive"] as? Timestamp)?.dateValue() ?? Date(),
+                location: parseLocation(from: data["location"]),
+                profileImageURL: data["profileImageURL"] as? String ?? "",
+                bio: data["bio"] as? String ?? "",
+                interests: data["interests"] as? [String] ?? [],
+                hasCompletedOnboarding: data["hasCompletedOnboarding"] as? Bool ?? false
+            )
+            
+            let user = IcebreakerUser(
+                id: uid,
+                firstName: profile.firstName,
+                email: profile.email
+            )
+            
+            self.user = user
+            self.userProfile = profile
+            self.hasCompletedOnboarding = profile.hasCompletedOnboarding
+            
+            print("✅ User profile loaded from Firestore")
+        } catch {
+            self.errorMessage = "Failed to load user profile: \(error.localizedDescription)"
+            print("❌ Error loading user profile: \(error)")
         }
+    }
+    
+    private func parseLocation(from data: Any?) -> IcebreakerGeoPoint? {
+        guard let locationData = data as? [String: Any],
+              let latitude = locationData["latitude"] as? Double,
+              let longitude = locationData["longitude"] as? Double else {
+            return nil
+        }
+        
+        return IcebreakerGeoPoint(latitude: latitude, longitude: longitude)
     }
 }
 
@@ -283,6 +436,7 @@ struct IcebreakerUserProfile: Codable, Identifiable {
     var profileImageURL: String
     var bio: String
     var interests: [String]
+    var hasCompletedOnboarding: Bool
     
     var isActiveNow: Bool {
         Date().timeIntervalSince(lastActive) < 300 // 5 minutes

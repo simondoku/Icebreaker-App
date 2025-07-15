@@ -101,6 +101,7 @@ struct MatchResult: Identifiable, Codable {
     let compatibilityScore: Double
     let sharedAnswers: [SharedAnswer]
     let aiInsight: String
+    let aiReasoning: String // Added missing property
     let distance: Double
     let matchedAt: Date
     
@@ -133,12 +134,13 @@ struct MatchResult: Identifiable, Codable {
         }
     }
     
-    init(user: User, compatibilityScore: Double, sharedAnswers: [SharedAnswer], aiInsight: String, distance: Double, matchedAt: Date = Date()) {
+    init(user: User, compatibilityScore: Double, sharedAnswers: [SharedAnswer], aiInsight: String, aiReasoning: String = "", distance: Double, matchedAt: Date = Date()) {
         self.id = UUID().uuidString
         self.user = user
         self.compatibilityScore = compatibilityScore
         self.sharedAnswers = sharedAnswers
         self.aiInsight = aiInsight
+        self.aiReasoning = aiReasoning.isEmpty ? aiInsight : aiReasoning // Fallback to aiInsight if aiReasoning is empty
         self.distance = distance
         self.matchedAt = matchedAt
     }
@@ -279,12 +281,13 @@ enum RealTimeChatConnectionStatus {
     case reconnecting
 }
 
-enum MessageDeliveryStatus: Codable {
-    case sending
-    case sent
-    case delivered
-    case read
-    case failed
+// MARK: - Message Delivery Status Enum
+enum MessageDeliveryStatus: String, Codable, CaseIterable {
+    case sending = "sending"
+    case sent = "sent" 
+    case delivered = "delivered"
+    case read = "read"
+    case failed = "failed"
 }
 
 struct RealTimeMessage: Identifiable, Codable {
@@ -323,7 +326,7 @@ struct RealTimeMessage: Identifiable, Codable {
 }
 
 struct RealTimeConversation: Identifiable, Codable {
-    let id: String
+    var id: String
     let participantIds: [String]
     let participantNames: [String]
     var messages: [RealTimeMessage]

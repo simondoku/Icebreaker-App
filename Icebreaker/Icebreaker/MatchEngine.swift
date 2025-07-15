@@ -10,11 +10,10 @@ import CoreLocation
 import Combine
 import Firebase
 import FirebaseFirestore
+import FirebaseAuth
 import SwiftUI
 
-// Note: The 'MatchResult' model is now defined in SharedModels.swift.
-
-// MARK: - Match Engine
+// MARK: - Real User Discovery Match Engine
 @MainActor
 class MatchEngine: ObservableObject {
     static let shared = MatchEngine()
@@ -23,251 +22,360 @@ class MatchEngine: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
-    // Add these published properties for compatibility with existing views
+    // Compatibility properties
     @Published var matches: [MatchResult] = []
     @Published var nearbyUsers: [User] = []
     @Published var isScanning = false
     
     private let db = Firestore.firestore()
     private let aiService = AIService.shared
-    private let locationManager = LocationManager.shared
     private var cancellables = Set<AnyCancellable>()
+    
+    // Real-time listeners
+    private var nearbyUsersListener: ListenerRegistration?
+    private var currentUserListener: ListenerRegistration?
     
     // Configuration
     private let maxMatchDistance: Double = 50.0 // kilometers
-    private let minCompatibilityScore: Double = 0.6
-    private let maxMatchesPerSearch = 10
+    private let minCompatibilityScore: Double = 0.3 // Lowered from 0.5 to 0.3
+    private let maxMatchesPerSearch = 20
+    private let refreshInterval: TimeInterval = 30.0 // 30 seconds
     
-    // Make initializer public for compatibility
     init() {
-        // Observe location manager changes
-        locationManager.$authorizationStatus
-            .sink { [weak self] status in
-                if status == .authorizedWhenInUse || status == .authorizedAlways {
-                    // Location permission granted, retry finding matches if needed
-                    if self?.errorMessage == "Location required for matching" {
-                        self?.errorMessage = nil
-                        // Retry with current user if available
-                        self?.retryMatchingWithLocation()
-                    }
-                }
+        setupLocationObserver()
+    }
+    
+    deinit {
+        nearbyUsersListener?.remove()
+        currentUserListener?.remove()
+    }
+    
+    // MARK: - Setup and Configuration
+    
+    private func setupLocationObserver() {
+        // Listen for location updates to refresh matches
+        NotificationCenter.default.publisher(for: .userLocationUpdated)
+            .debounce(for: .seconds(5), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshMatchesForCurrentUser()
             }
             .store(in: &cancellables)
     }
     
-    // Keep the shared instance pattern
-    static let sharedInstance = MatchEngine()
+    // MARK: - Main Discovery Methods
     
-    private func retryMatchingWithLocation() {
-        // This will be called when location permission is granted
-        // You can store the last user context and retry here
-    }
-    
-    // MARK: - Main Matching Function
     func findMatches(for currentUser: User) async {
-        // Check if we have location permission first
-        if !locationManager.isLocationPermissionGranted() {
-            await MainActor.run {
-                self.errorMessage = "Location required for matching"
-                // Request location permission
-                self.locationManager.requestLocationPermission()
-            }
-            return
-        }
-        
-        // If we have permission but no current location, try to get it
-        if locationManager.location == nil {
-            locationManager.startLocationUpdates()
-            await MainActor.run {
-                self.errorMessage = "Getting your location..."
-            }
-            return
-        }
-        
-        // Use current location from LocationManager if user location is not available
-        let userLocation = currentUser.clLocation ?? locationManager.location
-        
-        guard let userLocation = userLocation else {
-            await MainActor.run {
-                self.errorMessage = "Unable to determine your location. Please check your location settings."
-            }
-            return
-        }
-
         await MainActor.run {
             self.isLoading = true
             self.errorMessage = nil
         }
-
+        
         do {
-            // 1. Find nearby users
-            let nearbyUsers = try await findNearbyUsers(
-                userLocation: userLocation,
-                currentUserId: currentUser.id,
-                maxDistance: maxMatchDistance
-            )
-
-            // 2. Analyze compatibility with each user
-            var matchResults: [MatchResult] = []
-
-            for user in nearbyUsers {
-                if let matchResult = await analyzeCompatibility(
-                    currentUser: currentUser,
-                    potentialMatch: user
-                ) {
-                    matchResults.append(matchResult)
+            // 1. Get current user's location
+            guard let userLocation = getCurrentUserLocation(from: currentUser) else {
+                await MainActor.run {
+                    self.errorMessage = "Location required for finding matches"
+                    self.isLoading = false
                 }
+                return
             }
-
-            // 3. Sort by compatibility score and take top matches
-            let topMatches = matchResults
+            
+            // 2. Find nearby users from Firestore
+            let nearbyUsers = try await findNearbyUsersInFirestore(
+                userLocation: userLocation,
+                currentUserId: currentUser.id
+            )
+            
+            await MainActor.run {
+                self.nearbyUsers = nearbyUsers
+            }
+            
+            // 3. Calculate compatibility for each nearby user
+            let matchResults = await calculateCompatibilityScores(
+                currentUser: currentUser,
+                potentialMatches: nearbyUsers
+            )
+            
+            // 4. Filter and sort matches
+            let filteredMatches = matchResults
                 .filter { $0.compatibilityScore >= minCompatibilityScore }
                 .sorted { $0.compatibilityScore > $1.compatibilityScore }
                 .prefix(maxMatchesPerSearch)
-
+            
             await MainActor.run {
-                self.currentMatches = Array(topMatches)
-                self.matches = Array(topMatches) // Also update the compatible matches property
+                self.currentMatches = Array(filteredMatches)
+                self.matches = Array(filteredMatches)
                 self.isLoading = false
+                
+                print("✅ Found \(filteredMatches.count) compatible matches")
             }
-
+            
         } catch {
             await MainActor.run {
-                self.errorMessage = error.localizedDescription
+                self.errorMessage = "Failed to find matches: \(error.localizedDescription)"
                 self.isLoading = false
+                print("❌ Match finding error: \(error)")
             }
         }
     }
     
-    // MARK: - Convenience method for compatibility with existing code
-    func findMatches(userAnswers: [AIAnswer]) {
-        // Create a mock user for demonstration purposes
-        // In production, this should use the actual current user
-        let mockUser = User(
-            id: "current_user",
-            firstName: "You",
-            age: 25,
-            bio: "Looking for connections",
-            location: "Current Location",
-            interests: []
-        )
+    func findMatchesForCurrentUser() async {
+        // Get current authenticated user
+        guard let firebaseUser = Auth.auth().currentUser else {
+            await MainActor.run {
+                self.errorMessage = "Please sign in to find matches"
+            }
+            return
+        }
         
-        // Set mock location (San Francisco)
-        var currentUser = mockUser
-        currentUser.latitude = 37.7749
-        currentUser.longitude = -122.4194
-        currentUser.aiAnswers = userAnswers
-        currentUser.isVisible = true
-        
-        Task {
+        do {
+            // Get user profile from Firestore
+            let userDoc = try await db.collection("users").document(firebaseUser.uid).getDocument()
+            
+            guard let userData = userDoc.data() else {
+                await MainActor.run {
+                    self.errorMessage = "User profile not found"
+                }
+                return
+            }
+            
+            // Convert Firestore data to User model
+            let currentUser = try createUserFromFirestoreData(
+                id: firebaseUser.uid,
+                data: userData
+            )
+            
+            // Find matches for this user
             await findMatches(for: currentUser)
+            
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "Failed to load user profile: \(error.localizedDescription)"
+            }
         }
     }
     
-    // MARK: - Find Nearby Users
-    private func findNearbyUsers(
+    // MARK: - Firestore User Discovery
+    
+    private func findNearbyUsersInFirestore(
         userLocation: CLLocation,
-        currentUserId: String,
-        maxDistance: Double
+        currentUserId: String
     ) async throws -> [User] {
         
-        // Simplified query to avoid requiring composite indexes
-        // We'll fetch visible users and filter by location in memory
+        // Calculate bounding box for location query
+        let boundingBox = calculateBoundingBox(center: userLocation, radiusKm: maxMatchDistance)
+        
+        // Query Firestore for nearby visible users
         let snapshot = try await db.collection("users")
             .whereField("isVisible", isEqualTo: true)
-            .limit(to: 100) // Limit to reasonable number for memory filtering
+            .whereField("location.latitude", isGreaterThan: boundingBox.minLat)
+            .whereField("location.latitude", isLessThan: boundingBox.maxLat)
+            .limit(to: 100)
             .getDocuments()
         
         var nearbyUsers: [User] = []
         
         for document in snapshot.documents {
+            // Skip current user
+            if document.documentID == currentUserId { continue }
+            
             do {
-                var user = try document.data(as: User.self)
+                let userData = document.data()
+                let user = try createUserFromFirestoreData(
+                    id: document.documentID,
+                    data: userData
+                )
                 
-                // Skip current user
-                if user.id == currentUserId { continue }
-                
-                // Calculate exact distance if user has location
+                // Calculate exact distance
                 if let userLat = user.latitude, let userLon = user.longitude {
                     let userCLLocation = CLLocation(latitude: userLat, longitude: userLon)
-                    let distance = userLocation.distance(from: userCLLocation) / 1000.0 // Convert to km
+                    let distanceKm = userLocation.distance(from: userCLLocation) / 1000.0
                     
-                    // Check if within actual radius
-                    if distance <= maxDistance {
-                        user.distanceFromUser = distance
-                        nearbyUsers.append(user)
+                    // Check if within actual radius (bounding box is approximate)
+                    if distanceKm <= maxMatchDistance {
+                        var userWithDistance = user
+                        userWithDistance.distanceFromUser = distanceKm
+                        userWithDistance.isActive = isUserActive(userData)
+                        nearbyUsers.append(userWithDistance)
                     }
                 }
             } catch {
-                print("Error decoding user: \(error)")
+                print("❌ Error parsing user data: \(error)")
             }
         }
         
         // Sort by distance
-        nearbyUsers.sort { ($0.distanceFromUser ?? Double.greatestFiniteMagnitude) < ($1.distanceFromUser ?? Double.greatestFiniteMagnitude) }
+        nearbyUsers.sort { 
+            ($0.distanceFromUser ?? Double.greatestFiniteMagnitude) < 
+            ($1.distanceFromUser ?? Double.greatestFiniteMagnitude) 
+        }
         
+        print("✅ Found \(nearbyUsers.count) nearby users within \(maxMatchDistance)km")
         return nearbyUsers
     }
     
-    // MARK: - Analyze Compatibility
-    private func analyzeCompatibility(
+    private func createUserFromFirestoreData(id: String, data: [String: Any]) throws -> User {
+        // Extract location data
+        var latitude: Double?
+        var longitude: Double?
+        
+        if let locationData = data["location"] as? [String: Any] {
+            latitude = locationData["latitude"] as? Double
+            longitude = locationData["longitude"] as? Double
+        }
+        
+        // Extract AI answers
+        var aiAnswers: [AIAnswer] = []
+        if let answersData = data["answers"] as? [[String: Any]] {
+            for answerData in answersData {
+                if let questionId = answerData["questionId"] as? String,
+                   let questionText = answerData["questionText"] as? String,
+                   let answer = answerData["answer"] as? String {
+                    
+                    aiAnswers.append(AIAnswer(
+                        questionId: questionId,
+                        questionText: questionText,
+                        answer: answer
+                    ))
+                }
+            }
+        }
+        
+        // Create User model
+        var user = User(
+            id: id,
+            firstName: data["firstName"] as? String ?? "Unknown",
+            age: data["age"] as? Int ?? 25,
+            bio: data["bio"] as? String ?? "",
+            location: data["location"] as? String ?? "Unknown",
+            interests: data["interests"] as? [String] ?? []
+        )
+        
+        user.latitude = latitude
+        user.longitude = longitude
+        user.aiAnswers = aiAnswers
+        user.isVisible = data["isVisible"] as? Bool ?? false
+        user.profileImageURL = data["profileImageURL"] as? String
+        user.lastSeen = (data["lastActive"] as? Timestamp)?.dateValue()
+        user.createdAt = (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+        
+        return user
+    }
+    
+    private func isUserActive(_ userData: [String: Any]) -> Bool {
+        guard let lastActive = (userData["lastActive"] as? Timestamp)?.dateValue() else {
+            return false
+        }
+        
+        // Consider user active if they were online in the last 5 minutes
+        return Date().timeIntervalSince(lastActive) < 300
+    }
+    
+    // MARK: - Compatibility Calculation
+    
+    private func calculateCompatibilityScores(
+        currentUser: User,
+        potentialMatches: [User]
+    ) async -> [MatchResult] {
+        
+        var matchResults: [MatchResult] = []
+        
+        for potentialMatch in potentialMatches {
+            if let matchResult = await calculateSingleCompatibility(
+                currentUser: currentUser,
+                potentialMatch: potentialMatch
+            ) {
+                matchResults.append(matchResult)
+            }
+        }
+        
+        return matchResults
+    }
+    
+    private func calculateSingleCompatibility(
         currentUser: User,
         potentialMatch: User
     ) async -> MatchResult? {
         
-        // Find shared questions/answers
+        // Find shared interests
+        let sharedInterests = Set(currentUser.interests).intersection(Set(potentialMatch.interests))
+        let interestCompatibility = Double(sharedInterests.count) / Double(max(currentUser.interests.count, 1))
+        
+        // Find shared AI answers
         let sharedAnswers = findSharedAnswers(
             user1Answers: currentUser.aiAnswers,
             user2Answers: potentialMatch.aiAnswers
         )
         
-        guard !sharedAnswers.isEmpty else { return nil }
-        
-        // Analyze each shared answer pair with AI
-        var compatibilityScores: [Double] = []
+        var answerCompatibility = 0.0
         var analyzedAnswers: [MatchResult.SharedAnswer] = []
         
-        for sharedAnswer in sharedAnswers {
-            do {
-                let analysis = try await analyzeAnswerPair(
-                    questionText: sharedAnswer.questionText,
-                    answer1: sharedAnswer.userAnswer,
-                    answer2: sharedAnswer.matchAnswer
-                )
-                
-                compatibilityScores.append(analysis.score)
-                analyzedAnswers.append(MatchResult.SharedAnswer(
-                    questionText: sharedAnswer.questionText,
-                    userAnswer: sharedAnswer.userAnswer.answer,
-                    matchAnswer: sharedAnswer.matchAnswer.answer,
-                    compatibility: analysis.score
-                ))
-            } catch {
-                print("AI analysis failed: \(error)")
-                // Fallback to basic compatibility score
-                let basicScore = calculateBasicCompatibility(
+        if !sharedAnswers.isEmpty {
+            for sharedAnswer in sharedAnswers {
+                let compatibility = calculateAnswerCompatibility(
                     answer1: sharedAnswer.userAnswer.answer,
                     answer2: sharedAnswer.matchAnswer.answer
                 )
-                compatibilityScores.append(basicScore)
+                
+                answerCompatibility += compatibility
                 analyzedAnswers.append(MatchResult.SharedAnswer(
                     questionText: sharedAnswer.questionText,
                     userAnswer: sharedAnswer.userAnswer.answer,
                     matchAnswer: sharedAnswer.matchAnswer.answer,
-                    compatibility: basicScore
+                    compatibility: compatibility
                 ))
+            }
+            answerCompatibility /= Double(sharedAnswers.count)
+        }
+        
+        // Calculate overall compatibility with better handling for users with no data
+        var overallCompatibility = 0.4 // Base compatibility for new users
+        
+        // If both users have some data, calculate weighted compatibility
+        if !currentUser.interests.isEmpty || !currentUser.aiAnswers.isEmpty ||
+           !potentialMatch.interests.isEmpty || !potentialMatch.aiAnswers.isEmpty {
+            
+            var weightedScore = 0.0
+            var totalWeight = 0.0
+            
+            // Add interest compatibility if either user has interests
+            if !currentUser.interests.isEmpty || !potentialMatch.interests.isEmpty {
+                weightedScore += interestCompatibility * 0.3
+                totalWeight += 0.3
+            }
+            
+            // Add answer compatibility if both users have answered questions
+            if !sharedAnswers.isEmpty {
+                weightedScore += answerCompatibility * 0.7
+                totalWeight += 0.7
+            }
+            
+            // If we have any weighted data, use it
+            if totalWeight > 0 {
+                overallCompatibility = weightedScore / totalWeight
+            }
+            
+            // Boost compatibility slightly for having any shared data
+            if !sharedInterests.isEmpty || !sharedAnswers.isEmpty {
+                overallCompatibility += 0.1
             }
         }
         
-        // Calculate overall compatibility
-        let overallCompatibility = compatibilityScores.reduce(0, +) / Double(compatibilityScores.count)
+        // Ensure minimum compatibility for proximity
+        overallCompatibility = max(overallCompatibility, 0.35)
+        
+        // Debug print compatibility calculation
+        print("🧮 Compatibility for \(potentialMatch.firstName):")
+        print("   - Shared interests: \(sharedInterests.count) -> \(interestCompatibility)")
+        print("   - Shared answers: \(sharedAnswers.count) -> \(answerCompatibility)")
+        print("   - Overall: \(overallCompatibility)")
         
         // Generate AI insight
-        let insight = await generateMatchInsight(
+        let insight = generateInsight(
             compatibility: overallCompatibility,
+            sharedInterests: Array(sharedInterests),
             sharedAnswers: analyzedAnswers,
-            currentUser: currentUser,
-            potentialMatch: potentialMatch
+            matchName: potentialMatch.firstName
         )
         
         return MatchResult(
@@ -275,12 +383,23 @@ class MatchEngine: ObservableObject {
             compatibilityScore: overallCompatibility,
             sharedAnswers: analyzedAnswers,
             aiInsight: insight,
+            aiReasoning: insight, // Add the missing aiReasoning parameter
             distance: potentialMatch.distanceFromUser ?? 0,
             matchedAt: Date()
         )
     }
     
     // MARK: - Helper Methods
+    
+    private func getCurrentUserLocation(from user: User) -> CLLocation? {
+        if let lat = user.latitude, let lon = user.longitude {
+            return CLLocation(latitude: lat, longitude: lon)
+        }
+        
+        // Fallback to LocationManager
+        return LocationManager.shared.location
+    }
+    
     private func findSharedAnswers(
         user1Answers: [AIAnswer],
         user2Answers: [AIAnswer]
@@ -291,9 +410,7 @@ class MatchEngine: ObservableObject {
         for answer1 in user1Answers {
             for answer2 in user2Answers {
                 if answer1.questionId == answer2.questionId {
-                    // Find the question text (you might need to store this or fetch it)
-                    let questionText = getQuestionText(for: answer1.questionId) ?? "Unknown Question"
-                    sharedAnswers.append((questionText, answer1, answer2))
+                    sharedAnswers.append((answer1.questionText, answer1, answer2))
                 }
             }
         }
@@ -301,96 +418,53 @@ class MatchEngine: ObservableObject {
         return sharedAnswers
     }
     
-    private func getQuestionText(for questionId: String) -> String? {
-        // This should fetch from your questions database
-        // For now, return a placeholder based on common question patterns
-        // In a real app, you'd have a data store for AIQuestions.
-        return "What's your favorite way to spend a weekend?"
-    }
-    
-    private func analyzeAnswerPair(
-        questionText: String,
-        answer1: AIAnswer,
-        answer2: AIAnswer
-    ) async throws -> CompatibilityAnalysis {
-        
-        return try await withCheckedThrowingContinuation { continuation in
-            aiService.analyzeCompatibility(
-                userAnswer: answer1,
-                otherAnswer: answer2,
-                questionText: questionText
-            )
-            .sink(
-                receiveCompletion: { completion in
-                    switch completion {
-                    case .finished:
-                        break
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                },
-                receiveValue: { analysis in
-                    continuation.resume(returning: analysis)
-                }
-            )
-            .store(in: &cancellables)
-        }
-    }
-    
-    private func calculateBasicCompatibility(answer1: String, answer2: String) -> Double {
-        // Basic text similarity fallback
-        let words1 = Set(answer1.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        let words2 = Set(answer2.lowercased().components(separatedBy: .whitespacesAndNewlines))
+    private func calculateAnswerCompatibility(answer1: String, answer2: String) -> Double {
+        // Improved text similarity calculation
+        let words1 = Set(answer1.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty })
+        let words2 = Set(answer2.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty })
         
         let intersection = words1.intersection(words2)
         let union = words1.union(words2)
         
-        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
-    }
-    
-    private func generateMatchInsight(
-        compatibility: Double,
-        sharedAnswers: [MatchResult.SharedAnswer],
-        currentUser: User,
-        potentialMatch: User
-    ) async -> String {
+        guard !union.isEmpty else { return 0.0 }
         
-        do {
-            return try await withCheckedThrowingContinuation { continuation in
-                aiService.generateMatchInsight(
-                    compatibility: compatibility,
-                    sharedAnswers: sharedAnswers,
-                    userName: currentUser.firstName,
-                    matchName: potentialMatch.firstName
-                )
-                .sink(
-                    receiveCompletion: { completion in
-                        switch completion {
-                        case .finished:
-                            break
-                        case .failure:
-                            continuation.resume(returning: self.generateFallbackInsight(compatibility: compatibility))
-                        }
-                    },
-                    receiveValue: { insight in
-                        continuation.resume(returning: insight)
-                    }
-                )
-                .store(in: &cancellables)
-            }
-        } catch {
-            return generateFallbackInsight(compatibility: compatibility)
-        }
+        // Jaccard similarity
+        let jaccard = Double(intersection.count) / Double(union.count)
+        
+        // Boost score for longer shared content
+        let lengthBonus = min(Double(intersection.count) / 10.0, 0.2)
+        
+        return min(jaccard + lengthBonus, 1.0)
     }
     
-    private func generateFallbackInsight(compatibility: Double) -> String {
-        switch compatibility {
-        case 0.8...:
-            return "You two seem to have a lot in common and similar perspectives!"
-        case 0.6..<0.8:
-            return "You share some interesting commonalities worth exploring."
-        default:
-            return "You might have different perspectives that could lead to interesting conversations."
+    private func generateInsight(
+        compatibility: Double,
+        sharedInterests: [String],
+        sharedAnswers: [MatchResult.SharedAnswer],
+        matchName: String
+    ) -> String {
+        
+        if !sharedInterests.isEmpty && !sharedAnswers.isEmpty {
+            let interest = sharedInterests.first!
+            return "🎯 You both love \(interest) and have similar perspectives on life"
+        } else if !sharedInterests.isEmpty {
+            let interests = sharedInterests.prefix(2).joined(separator: " and ")
+            return "🎨 You share a passion for \(interests)"
+        } else if !sharedAnswers.isEmpty {
+            return "💭 You have similar thoughts and values - great foundation for connection"
+        } else {
+            switch compatibility {
+            case 0.7...:
+                return "✨ Strong potential for a meaningful connection"
+            case 0.5..<0.7:
+                return "🌟 You might have interesting conversations together"
+            default:
+                return "🤔 Different perspectives could lead to intriguing discussions"
+            }
         }
     }
     
@@ -406,15 +480,358 @@ class MatchEngine: ObservableObject {
         )
     }
     
-    // MARK: - Public Interface Methods
-    func refreshMatches(for user: User) {
+    // MARK: - Public Interface
+    
+    func refreshMatchesForCurrentUser() {
         Task {
-            await findMatches(for: user)
+            await findMatchesForCurrentUser()
+        }
+    }
+    
+    func startRealTimeMatching() {
+        refreshMatchesForCurrentUser()
+        
+        // Set up periodic refresh
+        Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
+            self?.refreshMatchesForCurrentUser()
         }
     }
     
     func clearMatches() {
         currentMatches.removeAll()
+        matches.removeAll()
+        nearbyUsers.removeAll()
         errorMessage = nil
     }
+    
+    // MARK: - Legacy Compatibility
+    
+    func findMatches(userAnswers: [AIAnswer]) {
+        // For backward compatibility - use real auth instead
+        refreshMatchesForCurrentUser()
+    }
 }
+
+// MARK: - Debug Testing Helper Methods
+
+#if DEBUG
+extension MatchEngine {
+    
+    // Create test users for debugging
+    func createTestUsers() async {
+        guard let currentUserId = Auth.auth().currentUser?.uid else {
+            print("❌ No authenticated user for testing")
+            return
+        }
+        
+        // Try to get location from multiple sources
+        var userLocation: CLLocation?
+        
+        // First try LocationManager
+        if let location = LocationManager.shared.location {
+            userLocation = location
+            print("✅ Using LocationManager location: \(location.coordinate)")
+        } else {
+            // Try to get from current user profile in Firebase
+            do {
+                let userDoc = try await db.collection("users").document(currentUserId).getDocument()
+                if let userData = userDoc.data(),
+                   let locationData = userData["location"] as? [String: Any],
+                   let lat = locationData["latitude"] as? Double,
+                   let lon = locationData["longitude"] as? Double {
+                    userLocation = CLLocation(latitude: lat, longitude: lon)
+                    print("✅ Using Firebase location: \(lat), \(lon)")
+                }
+            } catch {
+                print("❌ Error getting location from Firebase: \(error)")
+            }
+        }
+        
+        guard let location = userLocation else {
+            print("❌ No location available from any source for testing")
+            return
+        }
+        
+        let testUsers = [
+            createTestUser(
+                id: "test_user_1",
+                name: "Alex",
+                lat: location.coordinate.latitude + 0.001, // ~100m away
+                lon: location.coordinate.longitude + 0.001,
+                interests: ["coffee", "hiking", "books"],
+                answers: [
+                    ("morning_routine", "What's your ideal morning routine?", "Coffee and reading for 30 minutes"),
+                    ("weekend_plans", "Perfect weekend activity?", "Hiking in nature with friends")
+                ]
+            ),
+            createTestUser(
+                id: "test_user_2", 
+                name: "Maya",
+                lat: location.coordinate.latitude - 0.002, // ~200m away
+                lon: location.coordinate.longitude + 0.001,
+                interests: ["fitness", "music", "travel"],
+                answers: [
+                    ("workout_style", "Favorite way to stay active?", "Morning yoga and weekend bike rides"),
+                    ("travel_dream", "Dream destination?", "Backpacking through Southeast Asia")
+                ]
+            ),
+            createTestUser(
+                id: "test_user_3",
+                name: "Jordan", 
+                lat: location.coordinate.latitude + 0.001,
+                lon: location.coordinate.longitude - 0.002,
+                interests: ["photography", "coffee", "art"],
+                answers: [
+                    ("morning_routine", "What's your ideal morning routine?", "Coffee while editing photos from yesterday"),
+                    ("creative_outlet", "How do you express creativity?", "Street photography and film development")
+                ]
+            )
+        ]
+        
+        // Save test users to Firestore
+        for testUser in testUsers {
+            do {
+                try await db.collection("users").document(testUser["uid"] as! String).setData(testUser)
+                print("✅ Created test user: \(testUser["firstName"] as! String)")
+            } catch {
+                print("❌ Failed to create test user: \(error)")
+            }
+        }
+        
+        print("🧪 Test users created! Try refreshing your radar.")
+    }
+    
+    private func createTestUser(
+        id: String,
+        name: String, 
+        lat: Double,
+        lon: Double,
+        interests: [String],
+        answers: [(String, String, String)]
+    ) -> [String: Any] {
+        
+        let answersData = answers.map { answer in
+            return [
+                "questionId": answer.0,
+                "questionText": answer.1,
+                "answer": answer.2,
+                "timestamp": Timestamp(),
+                "category": "test"
+            ]
+        }
+        
+        return [
+            "uid": id,
+            "firstName": name,
+            "email": "\(name.lowercased())@test.com",
+            "age": Int.random(in: 22...35),
+            "bio": "Test user for debugging",
+            "interests": interests,
+            "location": [
+                "latitude": lat,
+                "longitude": lon
+            ],
+            "isVisible": true,
+            "visibilityRange": 25.0,
+            "answers": answersData,
+            "lastActive": Timestamp(),
+            "createdAt": Timestamp(),
+            "hasCompletedOnboarding": true,
+            "profileImageURL": ""
+        ]
+    }
+    
+    // Debug current user's data
+    func debugCurrentUser() async {
+        guard let currentUserId = Auth.auth().currentUser?.uid else {
+            print("❌ No authenticated user")
+            return
+        }
+        
+        do {
+            let doc = try await db.collection("users").document(currentUserId).getDocument()
+            if let data = doc.data() {
+                print("🔍 Current user data:")
+                print("- ID: \(currentUserId)")
+                print("- Name: \(data["firstName"] as? String ?? "Unknown")")
+                print("- Location: \(data["location"] ?? "No location")")
+                print("- Visible: \(data["isVisible"] as? Bool ?? false)")
+                print("- Interests: \(data["interests"] as? [String] ?? [])")
+                print("- Answers: \(data["answers"] as? [[String: Any]] ?? [])")
+            }
+        } catch {
+            print("❌ Error fetching current user: \(error)")
+        }
+    }
+    
+    // Debug nearby users query
+    func debugNearbyUsersQuery() async {
+        guard let currentUserId = Auth.auth().currentUser?.uid else {
+            print("❌ No authenticated user")
+            return
+        }
+        
+        guard let userLocation = LocationManager.shared.location else {
+            print("❌ No location available")
+            return
+        }
+        
+        print("🔍 Debugging nearby users query...")
+        print("- Current location: \(userLocation.coordinate)")
+        print("- Search radius: \(maxMatchDistance)km")
+        
+        let boundingBox = calculateBoundingBox(center: userLocation, radiusKm: maxMatchDistance)
+        print("- Bounding box: lat \(boundingBox.minLat) to \(boundingBox.maxLat)")
+        
+        // First, let's see ALL visible users regardless of location
+        do {
+            print("🔍 Checking ALL visible users first...")
+            let allUsersSnapshot = try await db.collection("users")
+                .whereField("isVisible", isEqualTo: true)
+                .limit(to: 10)
+                .getDocuments()
+            
+            print("📊 Found \(allUsersSnapshot.documents.count) total visible users:")
+            
+            for doc in allUsersSnapshot.documents {
+                let data = doc.data()
+                let name = data["firstName"] as? String ?? "Unknown"
+                let visible = data["isVisible"] as? Bool ?? false
+                
+                // Check different location formats
+                let nestedLocation = data["location"] as? [String: Any]
+                let nestedLat = nestedLocation?["latitude"] as? Double
+                let nestedLon = nestedLocation?["longitude"] as? Double
+                
+                let directLat = data["latitude"] as? Double
+                let directLon = data["longitude"] as? Double
+                
+                print("  - \(name) (visible: \(visible))")
+                print("    - Nested location: lat=\(nestedLat?.description ?? "nil"), lon=\(nestedLon?.description ?? "nil")")
+                print("    - Direct location: lat=\(directLat?.description ?? "nil"), lon=\(directLon?.description ?? "nil")")
+                
+                if doc.documentID == currentUserId {
+                    print("    ⭐ This is YOU")
+                }
+            }
+            
+            // Now try the nested location query
+            print("\n🔍 Trying nested location query...")
+            let nestedSnapshot = try await db.collection("users")
+                .whereField("isVisible", isEqualTo: true)
+                .whereField("location.latitude", isGreaterThan: boundingBox.minLat)
+                .whereField("location.latitude", isLessThan: boundingBox.maxLat)
+                .getDocuments()
+            
+            print("📍 Nested query found: \(nestedSnapshot.documents.count) users")
+            
+            // Try direct location query
+            print("\n🔍 Trying direct location query...")
+            let directSnapshot = try await db.collection("users")
+                .whereField("isVisible", isEqualTo: true)
+                .whereField("latitude", isGreaterThan: boundingBox.minLat)
+                .whereField("latitude", isLessThan: boundingBox.maxLat)
+                .getDocuments()
+            
+            print("📍 Direct query found: \(directSnapshot.documents.count) users")
+            
+        } catch {
+            print("❌ Error querying nearby users: \(error)")
+        }
+    }
+    
+    // Debug existing users in Firebase
+    func debugExistingUsers() async {
+        print("🔍 Checking existing users in Firebase...")
+        
+        do {
+            let snapshot = try await db.collection("users").getDocuments()
+            print("📊 Found \(snapshot.documents.count) total users:")
+            
+            for (index, document) in snapshot.documents.enumerated() {
+                let data = document.data()
+                let name = data["firstName"] as? String ?? "Unknown"
+                let email = data["email"] as? String ?? "No email"
+                let visible = data["isVisible"] as? Bool ?? false
+                let hasAnswers = !(data["answers"] as? [[String: Any]] ?? []).isEmpty
+                
+                // Check location data
+                var locationInfo = "No location"
+                if let locationData = data["location"] as? [String: Any],
+                   let lat = locationData["latitude"] as? Double,
+                   let lon = locationData["longitude"] as? Double {
+                    locationInfo = "Lat: \(String(format: "%.6f", lat)), Lon: \(String(format: "%.6f", lon))"
+                }
+                
+                print("  \(index + 1). \(name) (\(email))")
+                print("     - ID: \(document.documentID)")
+                print("     - Visible: \(visible)")
+                print("     - Location: \(locationInfo)")
+                print("     - Has Answers: \(hasAnswers)")
+                print("     - Last Active: \(data["lastActive"] ?? "Never")")
+                print("")
+            }
+            
+            if snapshot.documents.count < 2 {
+                print("⚠️ Need at least 2 users to test matching. Current count: \(snapshot.documents.count)")
+            } else {
+                print("✅ Ready to test matching between users!")
+            }
+            
+        } catch {
+            print("❌ Error fetching users: \(error)")
+        }
+    }
+    
+    // Test matching between two specific users
+    func testMatchingBetweenUsers(user1Id: String, user2Id: String) async {
+        print("🧪 Testing matching between user1: \(user1Id) and user2: \(user2Id)")
+        
+        do {
+            // Get both users
+            let user1Doc = try await db.collection("users").document(user1Id).getDocument()
+            let user2Doc = try await db.collection("users").document(user2Id).getDocument()
+            
+            guard let user1Data = user1Doc.data(),
+                  let user2Data = user2Doc.data() else {
+                print("❌ Could not find both users")
+                return
+            }
+            
+            let user1 = try createUserFromFirestoreData(id: user1Id, data: user1Data)
+            let user2 = try createUserFromFirestoreData(id: user2Id, data: user2Data)
+            
+            print("👤 User 1: \(user1.firstName)")
+            print("   - Location: \(user1.latitude ?? 0), \(user1.longitude ?? 0)")
+            print("   - Answers: \(user1.aiAnswers.count)")
+            print("   - Interests: \(user1.interests)")
+            
+            print("👤 User 2: \(user2.firstName)")
+            print("   - Location: \(user2.latitude ?? 0), \(user2.longitude ?? 0)")
+            print("   - Answers: \(user2.aiAnswers.count)")
+            print("   - Interests: \(user2.interests)")
+            
+            // Calculate compatibility
+            if !user1.aiAnswers.isEmpty && !user2.aiAnswers.isEmpty {
+                let matchResults = await calculateCompatibilityScores(
+                    currentUser: user1,
+                    potentialMatches: [user2]
+                )
+                
+                if let match = matchResults.first {
+                    print("🎯 Compatibility Score: \(Int(match.compatibilityScore * 100))%")
+                    print("📊 Match Level: \(match.matchLevel)")
+                    print("💡 AI Reasoning: \(match.aiReasoning)")
+                } else {
+                    print("❌ No compatibility calculated")
+                }
+            } else {
+                print("⚠️ One or both users have no answers for compatibility analysis")
+            }
+            
+        } catch {
+            print("❌ Error testing match: \(error)")
+        }
+    }
+}
+#endif

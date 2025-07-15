@@ -3,7 +3,8 @@ import CoreLocation
 
 struct GlassRadarView: View {
     @EnvironmentObject var locationManager: LocationManager
-    @StateObject private var matchEngine = MatchEngine()
+    @EnvironmentObject var authManager: FirebaseAuthManager
+    @StateObject private var matchEngine = MatchEngine.shared
     @EnvironmentObject var questionManager: AIQuestionManager
     
     @State private var isScanning = true
@@ -36,9 +37,10 @@ struct GlassRadarView: View {
             }
             .navigationBarHidden(true)
             .onAppear {
-                locationManager.requestLocationPermission()
-                updateMatches()
-                isScanning = true
+                setupRadar()
+            }
+            .refreshable {
+                await refreshMatches()
             }
             .sheet(isPresented: $showingUserDetails) {
                 if let match = selectedMatch {
@@ -65,11 +67,11 @@ struct GlassRadarView: View {
                     
                     HStack(spacing: 8) {
                         Circle()
-                            .fill(isScanning ? Color.green : Color.orange)
+                            .fill(radarStatusColor)
                             .frame(width: 8, height: 8)
                             .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: isScanning)
                         
-                        Text("AI Radar • \(isScanning ? "Scanning" : "Paused")")
+                        Text("AI Radar • \(radarStatusText)")
                             .font(.subheadline)
                             .foregroundColor(.white.opacity(0.7))
                     }
@@ -77,22 +79,17 @@ struct GlassRadarView: View {
                 
                 Spacer()
                 
-                Button(action: {
-                    withAnimation(.spring()) {
-                        isScanning.toggle()
-                        scanToggle.toggle()
-                    }
-                }) {
+                Button(action: toggleScanning) {
                     Image(systemName: isScanning ? "pause.circle.fill" : "play.circle.fill")
                         .font(.title2)
                         .foregroundColor(.cyan)
                 }
             }
             
-            // Stats bar
+            // Real Stats Bar
             HStack(spacing: 20) {
-                StatItem(number: "4", label: "Nearby")
-                StatItem(number: "89%", label: "Best Match")
+                StatItem(number: "\(matchEngine.currentMatches.count)", label: "Nearby")
+                StatItem(number: bestMatchPercentage, label: "Best Match")
                 StatItem(number: "\(Int(locationManager.visibilityRange))m", label: "Range")
             }
             .padding(.horizontal)
@@ -107,14 +104,29 @@ struct GlassRadarView: View {
             
             // Match Popup
             if showingMatchPopup, let match = selectedUserForPopup {
-                VStack {
-                    MatchPopupView(match: match)
+                ZStack {
+                    // Background overlay to dismiss popup when tapped
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.easeOut) {
+                                showingMatchPopup = false
+                            }
+                        }
+                    
+                    VStack {
+                        MatchPopupView(match: match, onDismiss: {
+                            withAnimation(.easeOut) {
+                                showingMatchPopup = false
+                            }
+                        })
                         .transition(.asymmetric(
                             insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.8)),
                             removal: .move(edge: .top).combined(with: .opacity)
                         ))
                         .zIndex(1)
-                    Spacer()
+                        Spacer()
+                    }
                 }
             }
         }
@@ -144,7 +156,7 @@ struct GlassRadarView: View {
     }
     
     private var userDotsView: some View {
-        ForEach(sampleMatches(), id: \.user.id) { match in
+        ForEach(matchEngine.currentMatches.prefix(8), id: \.user.id) { match in
             UserRadarDot(
                 match: match,
                 isScanning: isScanning,
@@ -154,11 +166,8 @@ struct GlassRadarView: View {
                         showingMatchPopup = true
                     }
                     
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                        withAnimation(.easeOut) {
-                            showingMatchPopup = false
-                        }
-                    }
+                    // Remove the auto-dismiss timer
+                    // Let users interact with the popup without it disappearing
                 }
             )
         }
@@ -263,10 +272,32 @@ struct GlassRadarView: View {
                     .font(.title3)
                     .fontWeight(.medium)
                     .foregroundColor(.cyan)
+                
                 Spacer()
+                
+                // Add debug buttons
+                HStack {
+                    Button("🔍 Debug") {
+                        Task {
+                            await matchEngine.debugCurrentUser()
+                            await matchEngine.debugNearbyUsersQuery()
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    
+                    Button("🧪 Test Users") {
+                        Task {
+                            await matchEngine.createTestUsers()
+                            await refreshMatches()
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundColor(.green)
+                }
             }
             
-            Text("Found 4 people nearby with shared experiences from your recent answers. Alex has the highest compatibility based on reading habits and daily routines.")
+            Text(generateAIInsight())
                 .font(.body)
                 .foregroundColor(.white.opacity(0.9))
                 .multilineTextAlignment(.leading)
@@ -282,57 +313,87 @@ struct GlassRadarView: View {
         )
     }
     
-    // MARK: - Helper Methods
+    // MARK: - Real Data Helper Methods
     
-    private func sampleMatches() -> [MatchResult] {
-        let matches = [
-            createSampleMatch(letter: "A", color: .green, position: CGPoint(x: 45, y: -30), matchPercent: 89, summary: "Both love morning coffee routines"),
-            createSampleMatch(letter: "M", color: .red, position: CGPoint(x: -65, y: -50), matchPercent: 67, summary: "Both interested in fitness and healthy living"),
-            createSampleMatch(letter: "J", color: .green, position: CGPoint(x: 75, y: 40), matchPercent: 82, summary: "Both enjoy weekend hiking and nature photography"),
-            createSampleMatch(letter: "S", color: .orange, position: CGPoint(x: -30, y: 70), matchPercent: 74, summary: "Both passionate about sustainable living")
-        ]
-        return matches
-    }
-    
-    private func updateMatches() {
-        matchEngine.findMatches(userAnswers: questionManager.userAnswers)
-    }
-    
-    private func createSampleMatch(letter: String, color: Color, position: CGPoint, matchPercent: Int = 85, summary: String = "Sample insight") -> MatchResult {
-        let user = User(
-            id: UUID().uuidString,
-            firstName: getDisplayName(for: letter),
-            age: 28,
-            bio: summary,
-            location: "San Francisco",
-            interests: ["fitness", "coffee", "hiking"]
-        )
+    private func setupRadar() {
+        // Request location permission
+        locationManager.requestLocationPermission()
         
-        var updatedUser = user
-        updatedUser.latitude = 37.7749
-        updatedUser.longitude = -122.4194
-        updatedUser.distanceFromUser = 15.0
-        updatedUser.isOnline = true
-        updatedUser.lastSeen = Date()
-        updatedUser.isVisible = true
-        updatedUser.firstName = letter
+        // Start finding real matches
+        refreshMatches()
         
-        return MatchResult(
-            user: updatedUser,
-            compatibilityScore: Double(matchPercent) / 100.0,
-            sharedAnswers: [],
-            aiInsight: summary,
-            distance: 15.0
-        )
+        // Set scanning state
+        isScanning = true
     }
     
-    // Helper function to calculate radar position for a user
-    private func radarPosition(for user: User) -> CGPoint {
-        let hash = abs(user.id.hashValue)
-        let x = Double((hash % 200) - 100) // -100 to 100
-        let y = Double(((hash / 200) % 200) - 100) // -100 to 100
-        return CGPoint(x: x, y: y)
+    private func refreshMatches() {
+        Task {
+            await matchEngine.findMatchesForCurrentUser()
+        }
     }
+    
+    private func toggleScanning() {
+        withAnimation(.spring()) {
+            isScanning.toggle()
+            scanToggle.toggle()
+        }
+        
+        if isScanning {
+            refreshMatches()
+        }
+    }
+    
+    // MARK: - Computed Properties
+    
+    private var radarStatusColor: Color {
+        if matchEngine.isLoading {
+            return .orange
+        } else if matchEngine.errorMessage != nil {
+            return .red
+        } else if isScanning {
+            return .green
+        } else {
+            return .gray
+        }
+    }
+    
+    private var radarStatusText: String {
+        if matchEngine.isLoading {
+            return "Searching"
+        } else if let error = matchEngine.errorMessage {
+            return "Error"
+        } else if isScanning {
+            return "Active"
+        } else {
+            return "Paused"
+        }
+    }
+    
+    private var bestMatchPercentage: String {
+        if let bestMatch = matchEngine.currentMatches.first {
+            return "\(Int(bestMatch.matchPercentage))%"
+        } else {
+            return "--"
+        }
+    }
+    
+    private func generateAIInsight() -> String {
+        let matchCount = matchEngine.currentMatches.count
+        
+        if matchEngine.isLoading {
+            return "🔍 Scanning for compatible people nearby using AI analysis..."
+        } else if let error = matchEngine.errorMessage {
+            return "⚠️ \(error). Please check your location settings and try again."
+        } else if matchCount == 0 {
+            return "🎯 No matches found yet. Make sure your location is enabled and you're visible to others. Try answering more AI questions to improve matches!"
+        } else if let topMatch = matchEngine.currentMatches.first {
+            return "🎉 Found \(matchCount) compatible people nearby! \(topMatch.user.firstName) has the highest compatibility at \(Int(topMatch.matchPercentage))% based on your shared interests and AI answers."
+        } else {
+            return "✨ Keep your radar active to discover new connections as people come and go!"
+        }
+    }
+    
+    // Remove the old sampleMatches() and createSampleMatch() methods
 }
 
 // MARK: - Supporting Views
@@ -464,6 +525,13 @@ struct GlassToggle: View {
 struct GlassUserDetailView: View {
     let match: MatchResult
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var interactionService = MatchInteractionService.shared
+    @EnvironmentObject var chatManager: IcebreakerChatManager
+    @State private var showingChatView = false
+    @State private var selectedConversation: IcebreakerChatConversation?
+    @State private var showingIntroMessageView = false
+    @State private var showingSuccessMessage = false
+    @State private var successMessage = ""
     
     var body: some View {
         ZStack {
@@ -617,13 +685,13 @@ struct GlassUserDetailView: View {
                         VStack(spacing: 12) {
                             HStack(spacing: 16) {
                                 Button("👋 Wave") {
-                                    dismiss()
+                                    sendWave()
                                 }
                                 .buttonStyle(GlassButtonStyle(isSecondary: true))
                                 .frame(maxWidth: .infinity)
                                 
                                 Button("💬 Start Chat") {
-                                    dismiss()
+                                    showingIntroMessageView = true
                                 }
                                 .buttonStyle(GlassButtonStyle())
                                 .frame(maxWidth: .infinity)
@@ -645,35 +713,153 @@ struct GlassUserDetailView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingIntroMessageView) {
+                IntroMessageView(match: match) { message in
+                    sendIntroMessage(message)
+                }
+            }
+            .sheet(isPresented: $showingChatView) {
+                if let conversation = selectedConversation {
+                    // Create a RealTimeConversation for the chat
+                    let realTimeConversation = RealTimeConversation(
+                        participantIds: ["current_user", match.user.id],
+                        participantNames: ["You", match.user.firstName]
+                    )
+                    
+                    // Use RealTimeChatView for proper chat functionality
+                    RealTimeChatView(conversation: realTimeConversation)
+                }
+            }
+            
+            // Success Overlay
+            if showingSuccessMessage {
+                VStack {
+                    Spacer()
+                    
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.green)
+                        
+                        Text(successMessage)
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                    }
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.black.opacity(0.9))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.green.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 40)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    
+                    Spacer()
+                        .frame(height: 100)
+                }
+                .onAppear {
+                    // Auto-dismiss after 2 seconds
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        withAnimation {
+                            showingSuccessMessage = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Actions
+    
+    private func sendWave() {
+        Task {
+            let success = await interactionService.sendWave(to: match)
+            if success {
+                withAnimation {
+                    successMessage = "Wave sent to \(match.user.firstName)! 👋"
+                    showingSuccessMessage = true
+                }
+            }
+        }
+    }
+    
+    private func sendIntroMessage(_ message: String) {
+        Task {
+            if let conversation = await interactionService.sendIntroMessage(to: match, message: message) {
+                chatManager.updateConversation(conversation)
+                selectedConversation = conversation
+                
+                withAnimation {
+                    successMessage = "Intro message sent to \(match.user.firstName)! 📝"
+                    showingSuccessMessage = true
+                }
+                
+                // Auto-open chat after a brief delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    showingChatView = true
+                }
+            }
         }
     }
 }
 
 struct MatchPopupView: View {
     let match: MatchResult
+    @State private var showingFullProfile = false
+    var onDismiss: () -> Void = {}
     
     var body: some View {
-        HStack(spacing: 16) {
-            // User name and match info
-            VStack(alignment: .leading, spacing: 4) {
-                Text(getDisplayName(for: match.user.firstName))
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.cyan)
+        Button(action: {
+            showingFullProfile = true
+        }) {
+            HStack(spacing: 16) {
+                // User avatar
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.purple, .blue, .cyan],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 50, height: 50)
+                    .overlay(
+                        Text(String(match.user.firstName.prefix(1)).uppercased())
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(.white)
+                    )
                 
-                Text("\(Int(match.matchPercentage))% Match")
-                    .font(.title3)
-                    .fontWeight(.medium)
-                    .foregroundColor(.green)
+                // User name and match info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(match.user.firstName)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.cyan)
+                    
+                    Text("\(Int(match.matchPercentage))% Match")
+                        .font(.title3)
+                        .fontWeight(.medium)
+                        .foregroundColor(.green)
+                    
+                    Text(match.aiInsight)
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.9))
+                        .lineLimit(2)
+                }
                 
-                Text(match.aiInsight)
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.9))
-                    .lineLimit(2)
+                Spacer()
+                
+                // Arrow indicator
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white.opacity(0.6))
             }
-            
-            Spacer()
         }
+        .buttonStyle(PlainButtonStyle())
         .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 16)
@@ -685,6 +871,9 @@ struct MatchPopupView: View {
         )
         .padding(.horizontal, 20)
         .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
+        .sheet(isPresented: $showingFullProfile) {
+            GlassUserDetailView(match: match)
+        }
     }
 }
 

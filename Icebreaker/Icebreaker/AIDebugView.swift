@@ -7,6 +7,8 @@
 
 import SwiftUI
 import Combine
+import Firebase
+import FirebaseFirestore
 
 struct AIDebugView: View {
     @StateObject private var debugManager = AIDebugManager()
@@ -51,6 +53,9 @@ struct AIDebugView: View {
                     
                     // AI Usage Statistics
                     UsageStatsCard()
+                    
+                    // Real User Testing
+                    RealUserTestCard(debugManager: debugManager)
                     
                     Spacer()
                 }
@@ -354,6 +359,203 @@ struct UsageStatsCard: View {
     }
 }
 
+struct RealUserTestCard: View {
+    @ObservedObject var debugManager: AIDebugManager
+    @State private var userList: [(id: String, name: String, email: String)] = []
+    @State private var selectedUser1: String = ""
+    @State private var selectedUser2: String = ""
+    @State private var isLoadingUsers = false
+    @State private var testResults: String = ""
+    
+    var body: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Image(systemName: "person.2.circle.fill")
+                        .foregroundColor(.blue)
+                        .font(.title2)
+                    
+                    Text("Real User Testing")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    
+                    Spacer()
+                }
+                
+                VStack(spacing: 12) {
+                    Button("Load Existing Users") {
+                        loadExistingUsers()
+                    }
+                    .buttonStyle(GlassButtonStyle())
+                    .disabled(isLoadingUsers)
+                    
+                    if isLoadingUsers {
+                        ProgressView("Loading users...")
+                            .foregroundColor(.cyan)
+                    }
+                    
+                    if !userList.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Found \(userList.count) users:")
+                                .font(.caption)
+                                .foregroundColor(.cyan)
+                            
+                            ForEach(userList, id: \.id) { user in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(user.name)
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                        Text(user.email)
+                                            .font(.caption2)
+                                            .foregroundColor(.white.opacity(0.6))
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    HStack(spacing: 8) {
+                                        Button("User 1") {
+                                            selectedUser1 = user.id
+                                        }
+                                        .font(.caption2)
+                                        .foregroundColor(selectedUser1 == user.id ? .green : .cyan)
+                                        
+                                        Button("User 2") {
+                                            selectedUser2 = user.id
+                                        }
+                                        .font(.caption2)
+                                        .foregroundColor(selectedUser2 == user.id ? .green : .cyan)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 8)
+                                .background(Color.white.opacity(0.05))
+                                .cornerRadius(6)
+                            }
+                            
+                            if !selectedUser1.isEmpty && !selectedUser2.isEmpty && selectedUser1 != selectedUser2 {
+                                Button("Test Matching & Chat") {
+                                    testRealUserFlow()
+                                }
+                                .buttonStyle(GlassButtonStyle())
+                                .disabled(debugManager.isTestingMatches)
+                            }
+                        }
+                    }
+                    
+                    if !testResults.isEmpty {
+                        ScrollView {
+                            Text(testResults)
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding()
+                                .background(Color.black.opacity(0.3))
+                                .cornerRadius(8)
+                        }
+                        .frame(maxHeight: 200)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func loadExistingUsers() {
+        isLoadingUsers = true
+        userList = []
+        
+        Task {
+            if let matchEngine = debugManager.matchEngine {
+                await matchEngine.debugExistingUsers()
+                
+                // Load user list for UI
+                do {
+                    let db = Firestore.firestore()
+                    let snapshot = try await db.collection("users").getDocuments()
+                    
+                    let users = snapshot.documents.map { doc in
+                        let data = doc.data()
+                        return (
+                            id: doc.documentID,
+                            name: data["firstName"] as? String ?? "Unknown",
+                            email: data["email"] as? String ?? "No email"
+                        )
+                    }
+                    
+                    await MainActor.run {
+                        self.userList = users
+                        self.isLoadingUsers = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.testResults = "Error loading users: \(error.localizedDescription)"
+                        self.isLoadingUsers = false
+                    }
+                }
+            }
+        }
+    }
+    
+    private func testRealUserFlow() {
+        testResults = "🧪 Starting real user test...\n"
+        
+        Task {
+            if let matchEngine = debugManager.matchEngine {
+                // Test matching between the two selected users
+                await matchEngine.testMatchingBetweenUsers(user1Id: selectedUser1, user2Id: selectedUser2)
+                
+                // Test conversation creation
+                await testConversationFlow()
+            }
+        }
+    }
+    
+    private func testConversationFlow() async {
+        let chatManager = RealTimeChatManager.shared
+        
+        await MainActor.run {
+            testResults += "\n🗨️ Testing conversation creation...\n"
+        }
+        
+        do {
+            // Try to create a conversation between the two users
+            let user1Name = userList.first { $0.id == selectedUser1 }?.name ?? "User1"
+            let user2Name = userList.first { $0.id == selectedUser2 }?.name ?? "User2"
+            
+            await MainActor.run {
+                testResults += "Creating conversation between \(user1Name) and \(user2Name)...\n"
+            }
+            
+            if let conversation = await chatManager.createConversation(with: selectedUser2, userName: user2Name) {
+                await MainActor.run {
+                    testResults += "✅ Conversation created: \(conversation.id)\n"
+                    testResults += "📝 Testing message sending...\n"
+                }
+                
+                // Send a test message
+                await chatManager.sendMessage("Hello! This is a test message from the debug console 👋", to: conversation.id)
+                
+                await MainActor.run {
+                    testResults += "✅ Test message sent!\n"
+                    testResults += "\n🎉 Real user test completed successfully!\n"
+                    testResults += "You can now test the full flow in the app:\n"
+                    testResults += "1. Switch between users in the app\n"
+                    testResults += "2. Check the radar for matches\n"
+                    testResults += "3. Send waves and messages\n"
+                    testResults += "4. Test real-time chat\n"
+                }
+            } else {
+                await MainActor.run {
+                    testResults += "❌ Failed to create conversation\n"
+                }
+            }
+        } catch {
+            await MainActor.run {
+                testResults += "❌ Error testing conversation: \(error.localizedDescription)\n"
+            }
+        }
+    }
+}
+
 struct StatusRow: View {
     let title: String
     let value: String
@@ -398,13 +600,12 @@ class AIDebugManager: ObservableObject {
     @Published var lastError: String?
     
     private let aiService = AIService.shared
-    @MainActor private var matchEngine: MatchEngine?
+    var matchEngine: MatchEngine? // Made non-private for access
     private var cancellables = Set<AnyCancellable>()
     
     init() {
-        Task { @MainActor in
-            self.matchEngine = MatchEngine()
-        }
+        // Initialize match engine on main actor
+        matchEngine = MatchEngine.shared
     }
     
     func testQuestionGeneration(category: AIQuestion.QuestionCategory) {
