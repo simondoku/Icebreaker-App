@@ -11,7 +11,7 @@
 ## Step 2: Add iOS App to Firebase
 
 1. In Firebase Console, click "Add app" → iOS
-2. Bundle ID: `com.simondoku.Icebreaker` (or your current bundle ID)
+2. Bundle ID: `com.simondoku.Icebreaker` (must match the Xcode app target)
 3. App nickname: `Icebreaker iOS`
 4. Download `GoogleService-Info.plist`
 5. **Important**: Add this file to your Xcode project
@@ -61,12 +61,12 @@ struct IcebreakerApp: App {
 
 ### Firestore Database  
 1. Go to Firestore Database → Create database
-2. Start in **test mode**
+2. Start in **production mode**
 3. Choose region (us-central1 recommended)
 
 ### Storage
 1. Go to Storage → Get started
-2. Start in **test mode**
+2. Start in **production mode**
 
 ## Step 7: Update Info.plist Permissions
 
@@ -91,3 +91,9 @@ Once Firebase SDK is added, we'll:
 - **"No such module 'FirebaseCore'"** → Firebase SDK not added to project
 - **"GoogleService-Info.plist not found"** → File not added to Xcode project
 - **Build errors** → Clean build folder (Cmd+Shift+K) and rebuild
+
+## Security rules
+
+`firestore.rules` is the versioned database policy. All unlisted paths are denied. Profiles marked visible remain readable by authenticated users, including location and email fields stored in those documents. Exact-location privacy requires splitting discovery data from private profile data or server-side matching.
+
+Run regression checks with Java 21+ and Node 22+: `cd security-tests && npm install && npm test`. The tests use the demo emulator project only.

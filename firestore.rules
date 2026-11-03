@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function participant(data) {
+      return signedIn() && request.auth.uid in data.participantIds;
+    }
+    function chatMember(conversationId) {
+      return participant(get(/databases/$(database)/documents/conversations/$(conversationId)).data);
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() &&
+        (request.auth.uid == userId || resource.data.get('isVisible', false) == true ||
+         resource.data.get('isLocationVisible', false) == true);
+      allow create, update: if signedIn() && request.auth.uid == userId &&
+        request.resource.data.get('uid', userId) == userId;
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if participant(resource.data);
+      allow create: if participant(request.resource.data) &&
+        request.resource.data.participantIds is list &&
+        request.resource.data.participantIds.size() == 2 &&
+        request.resource.data.participantIds[0] is string &&
+        request.resource.data.participantIds[1] is string &&
+        request.resource.data.participantIds[0] != request.resource.data.participantIds[1] &&
+        request.resource.data.participantNames is list &&
+        request.resource.data.participantNames.size() == 2;
+      allow update: if participant(resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastActivity', 'lastMessage', 'lastMessageSenderId', 'typingUsers', 'unreadCounts'
+        ]) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastMessage', 'lastMessageSenderId']) ||
+          request.resource.data.lastMessageSenderId == request.auth.uid);
+      allow delete: if participant(resource.data);
+
+      match /messages/{messageId} {
+        allow read: if chatMember(conversationId);
+        allow create: if chatMember(conversationId) &&
+          request.resource.data.keys().hasAll(['senderId', 'text', 'timestamp', 'deliveryStatus', 'isRead']) &&
+          request.resource.data.keys().hasOnly(['senderId', 'text', 'timestamp', 'deliveryStatus', 'isRead']) &&
+          request.resource.data.senderId == request.auth.uid &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 &&
+          request.resource.data.text.size() <= 10000 &&
+          request.resource.data.timestamp is timestamp &&
+          request.resource.data.deliveryStatus == 'sent' &&
+          request.resource.data.isRead == false;
+        allow update: if chatMember(conversationId) &&
+          resource.data.senderId != request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'deliveryStatus']) &&
+          request.resource.data.isRead == true &&
+          request.resource.data.deliveryStatus == 'read';
+        allow delete: if chatMember(conversationId);
+      }
+    }
+
+    match /connections/{connectionId} {
+      allow read, delete: if signedIn() &&
+        (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow create: if signedIn() &&
+        request.resource.data.keys().hasOnly(['fromUserId', 'toUserId', 'status', 'createdAt', 'type']) &&
+        request.resource.data.fromUserId == request.auth.uid &&
+        request.resource.data.toUserId is string &&
+        request.resource.data.toUserId != request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.type == 'connection_request' &&
+        request.resource.data.createdAt is timestamp;
+      allow update: if signedIn() && resource.data.toUserId == request.auth.uid &&
+        resource.data.status == 'pending' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
+        request.resource.data.status in ['accepted', 'declined'];
+    }
+    // No fallback grant: all other paths are denied.
+  }
+}
+

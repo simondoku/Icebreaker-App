@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --config ../firebase.json --only firestore --project demo-icebreaker \"node test.mjs\""
+  },
+  "devDependencies": {
+    "firebase-tools": "15.34.2",
+    "firebase": "12.19.0",
+    "@firebase/rules-unit-testing": "5.0.2"
+  }
+}

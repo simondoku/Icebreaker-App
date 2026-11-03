@@ -112,3 +112,8 @@ Icebreaker/Icebreaker/Info.plist
 *.secret
 config.json
 
+
+# Security test dependencies and emulator logs
+node_modules/
+*-debug.log
+.firebase/
