@@ -92,8 +92,20 @@ Once Firebase SDK is added, we'll:
 - **"GoogleService-Info.plist not found"** → File not added to Xcode project
 - **Build errors** → Clean build folder (Cmd+Shift+K) and rebuild
 
-## Security rules
+## Security rules and location privacy
 
-`firestore.rules` is the versioned database policy. All unlisted paths are denied. Profiles marked visible remain readable by authenticated users, including location and email fields stored in those documents. Exact-location privacy requires splitting discovery data from private profile data or server-side matching.
+`firestore.rules` is the versioned database policy. All unlisted paths are denied.
 
-Run regression checks with Java 21+ and Node 22+: `cd security-tests && npm install && npm test`. The tests use the demo emulator project only.
+- `/users/{uid}` is owner-only, including email, exact coordinates (nested and legacy formats), answers and account metadata. Existing documents are protected without moving or deleting their data.
+- `/discoveryProfiles/{uid}` holds an explicit projection: name, bio, interests, profile image URL, and integer 0.1-degree area-cell indices. No email, precise coordinates, free-form dictionaries, answer history or activity timestamps are accepted. Profiles are readable only after authentication. A cell is about 11 km north-to-south; its east-west size varies with latitude. This reveals an approximate area, not anonymity.
+- `PrivateProfileStore` uses a transaction to update private data and replace the discovery projection together. Hiding leaves only `{isVisible:false}`; rules reject a visibility change that would leave shared fields behind. Location refreshes do not enable visibility.
+- Existing accounts create their own discovery projection on the next sign-in with the rebuilt app. Old builds cannot query other users' private records and must be upgraded. No bulk administrative migration or copied account emails is needed.
+- Matching reads discovery profiles, uses approximate cell-center distances, and shares interests rather than private question-answer history. The search uses the existing single-field index on `cellLat`, with a 100-record cap per query; this prototype does not provide exhaustive discovery in dense regions. Distances are approximate and may include adjacent cells outside the selected radius.
+- Shared fields such as bio and profile image URL are intentionally public to signed-in users; users should not put private details into those fields.
+
+### Checks
+
+With Java 21+ and Node 22+: `cd security-tests && npm install && npm test`.
+The tests use a demo emulator project only. With Swift command-line tools, compile `Icebreaker/Icebreaker/DiscoveryProfile.swift` and `security-tests/DiscoveryProfileTests.swift` together and run the resulting executable. An optional output path writes the exact Swift projection for the emulator test (`SWIFT_PROJECTION_PATH`).
+
+An Xcode build and two-account device check are still required before releasing the rebuilt app. This change does not address DeepSeek API-key handling.

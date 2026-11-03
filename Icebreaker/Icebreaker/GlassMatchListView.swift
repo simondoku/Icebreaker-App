@@ -1220,16 +1220,16 @@ struct MatchCard: View {
                         
                         // Distance and age
                         HStack {
-                            Text("\(Int(match.distance))m away")
+                            Text(DiscoveryProfile.distanceLabel(meters: match.distance))
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.6))
                             
-                            Text("•")
-                                .foregroundColor(.white.opacity(0.6))
-                            
-                            Text("\(match.user.age) years old")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.6))
+                            if match.user.age > 0 {
+                                Text("•").foregroundColor(.white.opacity(0.6))
+                                Text("\(match.user.age) years old")
+                                    .font(.caption)
+                                    .foregroundColor(.white.opacity(0.6))
+                            }
                         }
                     }
                 }
@@ -1495,14 +1495,14 @@ struct MatchDetailView: View {
                     .foregroundColor(.white)
                 
                 HStack(spacing: 16) {
-                    Text("\(match.user.age) years old")
-                        .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.7))
+                    if match.user.age > 0 {
+                        Text("\(match.user.age) years old")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.7))
+                        Text("•").foregroundColor(.white.opacity(0.5))
+                    }
                     
-                    Text("•")
-                        .foregroundColor(.white.opacity(0.5))
-                    
-                    Text("\(Int(match.distance))m away")
+                    Text(DiscoveryProfile.distanceLabel(meters: match.distance))
                         .font(.subheadline)
                         .foregroundColor(.white.opacity(0.7))
                 }

@@ -90,7 +90,7 @@ struct GlassRadarView: View {
             HStack(spacing: 20) {
                 StatItem(number: "\(matchEngine.currentMatches.count)", label: "Nearby")
                 StatItem(number: bestMatchPercentage, label: "Best Match")
-                StatItem(number: "\(Int(locationManager.visibilityRange))m", label: "Range")
+                StatItem(number: "\(Int(locationManager.visibilityRange)) km", label: "Range")
             }
             .padding(.horizontal)
         }
@@ -186,20 +186,23 @@ struct GlassRadarView: View {
     private var visibilityRangeControl: some View {
         VStack(spacing: 16) {
             HStack {
-                Text("Visibility Range")
+                Text("Approximate search range")
                     .font(.title3)
                     .fontWeight(.medium)
                     .foregroundColor(.white)
                 
                 Spacer()
                 
-                Text("\(Int(locationManager.visibilityRange))m")
+                Text("\(Int(locationManager.visibilityRange)) km")
                     .font(.title3)
                     .fontWeight(.bold)
                     .foregroundColor(.cyan)
             }
             
-            SliderView(visibilityRange: $locationManager.visibilityRange)
+            SliderView(visibilityRange: Binding(
+                get: { locationManager.visibilityRange },
+                set: { locationManager.updateVisibilityRange($0) }
+            ))
         }
         .padding(24)
         .background(
@@ -316,6 +319,7 @@ struct GlassRadarView: View {
     // MARK: - Real Data Helper Methods
     
     private func setupRadar() {
+        locationManager.visibilityRange = authManager.userProfile?.visibilityRange ?? 25
         // Request location permission
         locationManager.requestLocationPermission()
         
@@ -578,7 +582,7 @@ struct GlassUserDetailView: View {
                                         Text("•")
                                             .foregroundColor(.white.opacity(0.5))
                                         
-                                        Text("\(Int(match.user.distance))m away")
+                                        Text(DiscoveryProfile.distanceLabel(meters: match.user.distance))
                                             .font(.subheadline)
                                             .foregroundColor(.white.opacity(0.7))
                                     }
@@ -883,7 +887,7 @@ struct SliderView: View {
     var body: some View {
         HStack {
             // Min label
-            Text("5m")
+            Text("5 km")
                 .font(.caption)
                 .foregroundColor(.white.opacity(0.7))
                 .frame(width: 30, alignment: .leading)
@@ -893,7 +897,7 @@ struct SliderView: View {
                 .accentColor(.cyan)
             
             // Max label
-            Text("50m")
+            Text("50 km")
                 .font(.caption)
                 .foregroundColor(.white.opacity(0.7))
                 .frame(width: 30, alignment: .trailing)

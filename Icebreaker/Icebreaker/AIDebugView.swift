@@ -470,14 +470,14 @@ struct RealUserTestCard: View {
                 // Load user list for UI
                 do {
                     let db = Firestore.firestore()
-                    let snapshot = try await db.collection("users").getDocuments()
+                    let snapshot = try await db.collection("discoveryProfiles").getDocuments()
                     
                     let users = snapshot.documents.map { doc in
                         let data = doc.data()
                         return (
                             id: doc.documentID,
                             name: data["firstName"] as? String ?? "Unknown",
-                            email: data["email"] as? String ?? "No email"
+                            email: "Private"
                         )
                     }
                     

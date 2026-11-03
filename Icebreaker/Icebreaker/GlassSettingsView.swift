@@ -74,7 +74,7 @@ struct GlassSettingsView: View {
                             
                             SettingsToggle(
                                 title: "Make me discoverable",
-                                subtitle: "Allow others to find you on the radar",
+                                subtitle: "Share your profile and approximate area. Your email and exact location stay private.",
                                 isOn: Binding(
                                     get: { authManager.userProfile?.isVisible ?? false },
                                     set: { authManager.updateVisibility(isVisible: $0) }
@@ -83,7 +83,7 @@ struct GlassSettingsView: View {
                             
                             if let userProfile = authManager.userProfile {
                                 VStack(alignment: .leading, spacing: 12) {
-                                    Text("Visibility Range: \(Int(userProfile.visibilityRange))m")
+                                    Text("Search range: \(Int(userProfile.visibilityRange)) km")
                                         .font(.subheadline)
                                         .foregroundColor(.white)
                                     

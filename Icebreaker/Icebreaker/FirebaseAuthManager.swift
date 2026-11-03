@@ -168,7 +168,7 @@ class FirebaseAuthManager: ObservableObject {
         
         Task {
             do {
-                try await db.collection("users").document(uid).updateData([
+                try await PrivateProfileStore.save(uid: uid, updates: [
                     "hasCompletedOnboarding": true,
                     "lastActive": Timestamp()
                 ])
@@ -217,7 +217,7 @@ class FirebaseAuthManager: ObservableObject {
         // Update in Firestore
         Task {
             do {
-                try await db.collection("users").document(uid).updateData(updates)
+                try await PrivateProfileStore.save(uid: uid, updates: updates)
             } catch {
                 print("❌ Error updating profile: \(error)")
             }
@@ -226,25 +226,25 @@ class FirebaseAuthManager: ObservableObject {
     
     func updateVisibility(isVisible: Bool) {
         guard let uid = Auth.auth().currentUser?.uid else { return }
-        guard var profile = userProfile else { return }
-        
-        profile.isVisible = isVisible
-        profile.lastActive = Date()
-        userProfile = profile
-        
-        // Update in Firestore
         Task {
             do {
-                try await db.collection("users").document(uid).updateData([
+                try await PrivateProfileStore.save(uid: uid, updates: [
                     "isVisible": isVisible,
+                    "isLocationVisible": isVisible,
                     "lastActive": Timestamp()
                 ])
+                await MainActor.run {
+                    self.userProfile?.isVisible = isVisible
+                    self.userProfile?.lastActive = Date()
+                }
             } catch {
-                print("❌ Error updating visibility: \(error)")
+                await MainActor.run {
+                    self.errorMessage = "Could not change discovery visibility. Please try again."
+                }
             }
         }
     }
-    
+
     func updateVisibilityRange(_ range: Double) {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         guard var profile = userProfile else { return }
@@ -255,7 +255,7 @@ class FirebaseAuthManager: ObservableObject {
         // Update in Firestore
         Task {
             do {
-                try await db.collection("users").document(uid).updateData([
+                try await PrivateProfileStore.save(uid: uid, updates: [
                     "visibilityRange": range,
                     "lastActive": Timestamp()
                 ])
@@ -281,7 +281,7 @@ class FirebaseAuthManager: ObservableObject {
         // Update in Firestore with BOTH formats for compatibility
         Task {
             do {
-                try await db.collection("users").document(uid).updateData([
+                try await PrivateProfileStore.save(uid: uid, updates: [
                     // New nested format (for MatchEngine)
                     "location": [
                         "latitude": location.coordinate.latitude,
@@ -290,11 +290,10 @@ class FirebaseAuthManager: ObservableObject {
                     // Legacy direct format (for compatibility)
                     "latitude": location.coordinate.latitude,
                     "longitude": location.coordinate.longitude,
-                    "isVisible": true,
                     "lastActive": Timestamp(),
                     "lastLocationUpdate": Timestamp()
                 ])
-                print("✅ Location updated in Firebase: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+                print("✅ Private location updated")
             } catch {
                 print("❌ Error updating location: \(error)")
             }
@@ -345,7 +344,7 @@ class FirebaseAuthManager: ObservableObject {
                 "hasCompletedOnboarding": false
             ]
             
-            try await db.collection("users").document(uid).setData(profileData)
+            try await PrivateProfileStore.save(uid: uid, updates: profileData)
             
             // Update local state
             self.user = user
@@ -369,6 +368,9 @@ class FirebaseAuthManager: ObservableObject {
                 return
             }
             
+            // Migrate only this owner on sign-in; existing account data stays private.
+            try await PrivateProfileStore.save(uid: uid)
+
             // Parse Firestore data
             let profile = IcebreakerUserProfile(
                 id: uid,

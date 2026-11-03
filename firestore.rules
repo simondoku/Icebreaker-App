@@ -9,12 +9,39 @@ service cloud.firestore {
       return participant(get(/databases/$(database)/documents/conversations/$(conversationId)).data);
     }
 
+    function discoverable(data) {
+      return data.get('isVisible', data.get('isLocationVisible', false)) == true &&
+        data.get('isLocationVisible', true) == true;
+    }
+    function hiddenProjection(userId) {
+      return getAfter(/databases/$(database)/documents/discoveryProfiles/$(userId)).data.keys().hasOnly(['isVisible']) &&
+        getAfter(/databases/$(database)/documents/discoveryProfiles/$(userId)).data.isVisible == false;
+    }
     match /users/{userId} {
-      allow read: if signedIn() &&
-        (request.auth.uid == userId || resource.data.get('isVisible', false) == true ||
-         resource.data.get('isLocationVisible', false) == true);
+      // Entire legacy documents are private, including email and both location formats.
+      allow read: if signedIn() && request.auth.uid == userId;
       allow create, update: if signedIn() && request.auth.uid == userId &&
-        request.resource.data.get('uid', userId) == userId;
+        request.resource.data.get('uid', userId) == userId &&
+        (discoverable(request.resource.data) ||
+         !exists(/databases/$(database)/documents/discoveryProfiles/$(userId)) || hiddenProjection(userId));
+      allow delete: if signedIn() && request.auth.uid == userId &&
+        (!exists(/databases/$(database)/documents/discoveryProfiles/$(userId)) || hiddenProjection(userId));
+    }
+    match /discoveryProfiles/{userId} {
+      // Hidden records contain only {isVisible:false}. Queries use a single cellLat index.
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == userId &&
+        ((request.resource.data.keys().hasOnly(['isVisible']) && request.resource.data.isVisible == false) ||
+         (discoverable(getAfter(/databases/$(database)/documents/users/$(userId)).data) &&
+          request.resource.data.keys().hasAll(['schemaVersion', 'isVisible', 'firstName', 'bio', 'interestsText', 'profileImageURL', 'cellLat', 'cellLon']) &&
+          request.resource.data.keys().hasOnly(['schemaVersion', 'isVisible', 'firstName', 'bio', 'interestsText', 'profileImageURL', 'cellLat', 'cellLon']) &&
+          request.resource.data.schemaVersion == 1 && request.resource.data.isVisible == true &&
+          request.resource.data.firstName is string && request.resource.data.firstName.size() <= 100 &&
+          request.resource.data.bio is string && request.resource.data.bio.size() <= 1000 &&
+          request.resource.data.interestsText is string && request.resource.data.interestsText.size() <= 1000 &&
+          request.resource.data.profileImageURL is string && request.resource.data.profileImageURL.size() <= 2048 &&
+          request.resource.data.cellLat is int && request.resource.data.cellLat >= 0 && request.resource.data.cellLat < 1800 &&
+          request.resource.data.cellLon is int && request.resource.data.cellLon >= 0 && request.resource.data.cellLon < 3600));
       allow delete: if signedIn() && request.auth.uid == userId;
     }
 

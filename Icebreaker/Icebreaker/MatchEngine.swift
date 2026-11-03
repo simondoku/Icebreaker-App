@@ -36,7 +36,7 @@ class MatchEngine: ObservableObject {
     private var currentUserListener: ListenerRegistration?
     
     // Configuration
-    private let maxMatchDistance: Double = 50.0 // kilometers
+    private var maxMatchDistance: Double = 50.0 // kilometers
     private let minCompatibilityScore: Double = 0.3 // Lowered from 0.5 to 0.3
     private let maxMatchesPerSearch = 20
     private let refreshInterval: TimeInterval = 30.0 // 30 seconds
@@ -139,6 +139,8 @@ class MatchEngine: ObservableObject {
                 return
             }
             
+            maxMatchDistance = min(50, max(5, userData["visibilityRange"] as? Double ?? 25))
+
             // Convert Firestore data to User model
             let currentUser = try createUserFromFirestoreData(
                 id: firebaseUser.uid,
@@ -162,17 +164,13 @@ class MatchEngine: ObservableObject {
         currentUserId: String
     ) async throws -> [User] {
         
-        // Calculate bounding box for location query
-        let boundingBox = calculateBoundingBox(center: userLocation, radiusKm: maxMatchDistance)
-        
-        // Query Firestore for nearby visible users
-        let snapshot = try await db.collection("users")
-            .whereField("isVisible", isEqualTo: true)
-            .whereField("location.latitude", isGreaterThan: boundingBox.minLat)
-            .whereField("location.latitude", isLessThan: boundingBox.maxLat)
+        let bounds = DiscoveryProfile.latitudeBounds(userLocation.coordinate.latitude, radiusKm: maxMatchDistance)
+        let snapshot = try await db.collection("discoveryProfiles")
+            .whereField("cellLat", isGreaterThanOrEqualTo: bounds.min)
+            .whereField("cellLat", isLessThanOrEqualTo: bounds.max)
             .limit(to: 100)
             .getDocuments()
-        
+
         var nearbyUsers: [User] = []
         
         for document in snapshot.documents {
@@ -186,15 +184,15 @@ class MatchEngine: ObservableObject {
                     data: userData
                 )
                 
-                // Calculate exact distance
+                // Approximate distance to the shared cell center
                 if let userLat = user.latitude, let userLon = user.longitude {
                     let userCLLocation = CLLocation(latitude: userLat, longitude: userLon)
                     let distanceKm = userLocation.distance(from: userCLLocation) / 1000.0
                     
-                    // Check if within actual radius (bounding box is approximate)
-                    if distanceKm <= maxMatchDistance {
+                    // Include the cell uncertainty at the radius boundary
+                    if distanceKm <= maxMatchDistance + 16 {
                         var userWithDistance = user
-                        userWithDistance.distanceFromUser = distanceKm
+                        userWithDistance.distanceFromUser = distanceKm * 1000
                         userWithDistance.isActive = isUserActive(userData)
                         nearbyUsers.append(userWithDistance)
                     }
@@ -224,6 +222,14 @@ class MatchEngine: ObservableObject {
             longitude = locationData["longitude"] as? Double
         }
         
+        latitude = data["latitude"] as? Double ?? latitude
+        longitude = data["longitude"] as? Double ?? longitude
+
+        if let center = DiscoveryProfile.center(data) {
+            latitude = center.latitude
+            longitude = center.longitude
+        }
+
         // Extract AI answers
         var aiAnswers: [AIAnswer] = []
         if let answersData = data["answers"] as? [[String: Any]] {
@@ -245,10 +251,10 @@ class MatchEngine: ObservableObject {
         var user = User(
             id: id,
             firstName: data["firstName"] as? String ?? "Unknown",
-            age: data["age"] as? Int ?? 25,
+            age: data["age"] as? Int ?? 0,
             bio: data["bio"] as? String ?? "",
             location: data["location"] as? String ?? "Unknown",
-            interests: data["interests"] as? [String] ?? []
+            interests: data["interests"] as? [String] ?? (data["interestsText"] as? String ?? "").split(separator: "\n").map(String.init)
         )
         
         user.latitude = latitude
@@ -512,326 +518,35 @@ class MatchEngine: ObservableObject {
     }
 }
 
-// MARK: - Debug Testing Helper Methods
-
+// MARK: - Debug helpers use only discovery data; seed fixtures in the emulator.
 #if DEBUG
 extension MatchEngine {
-    
-    // Create test users for debugging
     func createTestUsers() async {
-        guard let currentUserId = Auth.auth().currentUser?.uid else {
-            print("❌ No authenticated user for testing")
-            return
-        }
-        
-        // Try to get location from multiple sources
-        var userLocation: CLLocation?
-        
-        // First try LocationManager
-        if let location = LocationManager.shared.location {
-            userLocation = location
-            print("✅ Using LocationManager location: \(location.coordinate)")
-        } else {
-            // Try to get from current user profile in Firebase
-            do {
-                let userDoc = try await db.collection("users").document(currentUserId).getDocument()
-                if let userData = userDoc.data(),
-                   let locationData = userData["location"] as? [String: Any],
-                   let lat = locationData["latitude"] as? Double,
-                   let lon = locationData["longitude"] as? Double {
-                    userLocation = CLLocation(latitude: lat, longitude: lon)
-                    print("✅ Using Firebase location: \(lat), \(lon)")
-                }
-            } catch {
-                print("❌ Error getting location from Firebase: \(error)")
-            }
-        }
-        
-        guard let location = userLocation else {
-            print("❌ No location available from any source for testing")
-            return
-        }
-        
-        let testUsers = [
-            createTestUser(
-                id: "test_user_1",
-                name: "Alex",
-                lat: location.coordinate.latitude + 0.001, // ~100m away
-                lon: location.coordinate.longitude + 0.001,
-                interests: ["coffee", "hiking", "books"],
-                answers: [
-                    ("morning_routine", "What's your ideal morning routine?", "Coffee and reading for 30 minutes"),
-                    ("weekend_plans", "Perfect weekend activity?", "Hiking in nature with friends")
-                ]
-            ),
-            createTestUser(
-                id: "test_user_2", 
-                name: "Maya",
-                lat: location.coordinate.latitude - 0.002, // ~200m away
-                lon: location.coordinate.longitude + 0.001,
-                interests: ["fitness", "music", "travel"],
-                answers: [
-                    ("workout_style", "Favorite way to stay active?", "Morning yoga and weekend bike rides"),
-                    ("travel_dream", "Dream destination?", "Backpacking through Southeast Asia")
-                ]
-            ),
-            createTestUser(
-                id: "test_user_3",
-                name: "Jordan", 
-                lat: location.coordinate.latitude + 0.001,
-                lon: location.coordinate.longitude - 0.002,
-                interests: ["photography", "coffee", "art"],
-                answers: [
-                    ("morning_routine", "What's your ideal morning routine?", "Coffee while editing photos from yesterday"),
-                    ("creative_outlet", "How do you express creativity?", "Street photography and film development")
-                ]
-            )
-        ]
-        
-        // Save test users to Firestore
-        for testUser in testUsers {
-            do {
-                try await db.collection("users").document(testUser["uid"] as! String).setData(testUser)
-                print("✅ Created test user: \(testUser["firstName"] as! String)")
-            } catch {
-                print("❌ Failed to create test user: \(error)")
-            }
-        }
-        
-        print("🧪 Test users created! Try refreshing your radar.")
+        print("Use security-tests emulator fixtures; do not seed other users from a client.")
     }
-    
-    private func createTestUser(
-        id: String,
-        name: String, 
-        lat: Double,
-        lon: Double,
-        interests: [String],
-        answers: [(String, String, String)]
-    ) -> [String: Any] {
-        
-        let answersData = answers.map { answer in
-            return [
-                "questionId": answer.0,
-                "questionText": answer.1,
-                "answer": answer.2,
-                "timestamp": Timestamp(),
-                "category": "test"
-            ]
-        }
-        
-        return [
-            "uid": id,
-            "firstName": name,
-            "email": "\(name.lowercased())@test.com",
-            "age": Int.random(in: 22...35),
-            "bio": "Test user for debugging",
-            "interests": interests,
-            "location": [
-                "latitude": lat,
-                "longitude": lon
-            ],
-            "isVisible": true,
-            "visibilityRange": 25.0,
-            "answers": answersData,
-            "lastActive": Timestamp(),
-            "createdAt": Timestamp(),
-            "hasCompletedOnboarding": true,
-            "profileImageURL": ""
-        ]
-    }
-    
-    // Debug current user's data
     func debugCurrentUser() async {
-        guard let currentUserId = Auth.auth().currentUser?.uid else {
-            print("❌ No authenticated user")
-            return
-        }
-        
-        do {
-            let doc = try await db.collection("users").document(currentUserId).getDocument()
-            if let data = doc.data() {
-                print("🔍 Current user data:")
-                print("- ID: \(currentUserId)")
-                print("- Name: \(data["firstName"] as? String ?? "Unknown")")
-                print("- Location: \(data["location"] ?? "No location")")
-                print("- Visible: \(data["isVisible"] as? Bool ?? false)")
-                print("- Interests: \(data["interests"] as? [String] ?? [])")
-                print("- Answers: \(data["answers"] as? [[String: Any]] ?? [])")
-            }
-        } catch {
-            print("❌ Error fetching current user: \(error)")
-        }
+        print("Signed-in user present: \(Auth.auth().currentUser != nil)")
     }
-    
-    // Debug nearby users query
     func debugNearbyUsersQuery() async {
-        guard let currentUserId = Auth.auth().currentUser?.uid else {
-            print("❌ No authenticated user")
-            return
-        }
-        
-        guard let userLocation = LocationManager.shared.location else {
-            print("❌ No location available")
-            return
-        }
-        
-        print("🔍 Debugging nearby users query...")
-        print("- Current location: \(userLocation.coordinate)")
-        print("- Search radius: \(maxMatchDistance)km")
-        
-        let boundingBox = calculateBoundingBox(center: userLocation, radiusKm: maxMatchDistance)
-        print("- Bounding box: lat \(boundingBox.minLat) to \(boundingBox.maxLat)")
-        
-        // First, let's see ALL visible users regardless of location
-        do {
-            print("🔍 Checking ALL visible users first...")
-            let allUsersSnapshot = try await db.collection("users")
-                .whereField("isVisible", isEqualTo: true)
-                .limit(to: 10)
-                .getDocuments()
-            
-            print("📊 Found \(allUsersSnapshot.documents.count) total visible users:")
-            
-            for doc in allUsersSnapshot.documents {
-                let data = doc.data()
-                let name = data["firstName"] as? String ?? "Unknown"
-                let visible = data["isVisible"] as? Bool ?? false
-                
-                // Check different location formats
-                let nestedLocation = data["location"] as? [String: Any]
-                let nestedLat = nestedLocation?["latitude"] as? Double
-                let nestedLon = nestedLocation?["longitude"] as? Double
-                
-                let directLat = data["latitude"] as? Double
-                let directLon = data["longitude"] as? Double
-                
-                print("  - \(name) (visible: \(visible))")
-                print("    - Nested location: lat=\(nestedLat?.description ?? "nil"), lon=\(nestedLon?.description ?? "nil")")
-                print("    - Direct location: lat=\(directLat?.description ?? "nil"), lon=\(directLon?.description ?? "nil")")
-                
-                if doc.documentID == currentUserId {
-                    print("    ⭐ This is YOU")
-                }
-            }
-            
-            // Now try the nested location query
-            print("\n🔍 Trying nested location query...")
-            let nestedSnapshot = try await db.collection("users")
-                .whereField("isVisible", isEqualTo: true)
-                .whereField("location.latitude", isGreaterThan: boundingBox.minLat)
-                .whereField("location.latitude", isLessThan: boundingBox.maxLat)
-                .getDocuments()
-            
-            print("📍 Nested query found: \(nestedSnapshot.documents.count) users")
-            
-            // Try direct location query
-            print("\n🔍 Trying direct location query...")
-            let directSnapshot = try await db.collection("users")
-                .whereField("isVisible", isEqualTo: true)
-                .whereField("latitude", isGreaterThan: boundingBox.minLat)
-                .whereField("latitude", isLessThan: boundingBox.maxLat)
-                .getDocuments()
-            
-            print("📍 Direct query found: \(directSnapshot.documents.count) users")
-            
-        } catch {
-            print("❌ Error querying nearby users: \(error)")
-        }
+        await findMatchesForCurrentUser()
+        print("Discovery returned \(nearbyUsers.count) approximate-area profiles")
     }
-    
-    // Debug existing users in Firebase
     func debugExistingUsers() async {
-        print("🔍 Checking existing users in Firebase...")
-        
         do {
-            let snapshot = try await db.collection("users").getDocuments()
-            print("📊 Found \(snapshot.documents.count) total users:")
-            
-            for (index, document) in snapshot.documents.enumerated() {
-                let data = document.data()
-                let name = data["firstName"] as? String ?? "Unknown"
-                let email = data["email"] as? String ?? "No email"
-                let visible = data["isVisible"] as? Bool ?? false
-                let hasAnswers = !(data["answers"] as? [[String: Any]] ?? []).isEmpty
-                
-                // Check location data
-                var locationInfo = "No location"
-                if let locationData = data["location"] as? [String: Any],
-                   let lat = locationData["latitude"] as? Double,
-                   let lon = locationData["longitude"] as? Double {
-                    locationInfo = "Lat: \(String(format: "%.6f", lat)), Lon: \(String(format: "%.6f", lon))"
-                }
-                
-                print("  \(index + 1). \(name) (\(email))")
-                print("     - ID: \(document.documentID)")
-                print("     - Visible: \(visible)")
-                print("     - Location: \(locationInfo)")
-                print("     - Has Answers: \(hasAnswers)")
-                print("     - Last Active: \(data["lastActive"] ?? "Never")")
-                print("")
-            }
-            
-            if snapshot.documents.count < 2 {
-                print("⚠️ Need at least 2 users to test matching. Current count: \(snapshot.documents.count)")
-            } else {
-                print("✅ Ready to test matching between users!")
-            }
-            
-        } catch {
-            print("❌ Error fetching users: \(error)")
-        }
+            let snapshot = try await db.collection("discoveryProfiles").limit(to: 100).getDocuments()
+            print("Discovery records: \(snapshot.documents.count)")
+        } catch { print("Discovery check failed: \(error.localizedDescription)") }
     }
-    
-    // Test matching between two specific users
     func testMatchingBetweenUsers(user1Id: String, user2Id: String) async {
-        print("🧪 Testing matching between user1: \(user1Id) and user2: \(user2Id)")
-        
         do {
-            // Get both users
-            let user1Doc = try await db.collection("users").document(user1Id).getDocument()
-            let user2Doc = try await db.collection("users").document(user2Id).getDocument()
-            
-            guard let user1Data = user1Doc.data(),
-                  let user2Data = user2Doc.data() else {
-                print("❌ Could not find both users")
-                return
-            }
-            
-            let user1 = try createUserFromFirestoreData(id: user1Id, data: user1Data)
-            let user2 = try createUserFromFirestoreData(id: user2Id, data: user2Data)
-            
-            print("👤 User 1: \(user1.firstName)")
-            print("   - Location: \(user1.latitude ?? 0), \(user1.longitude ?? 0)")
-            print("   - Answers: \(user1.aiAnswers.count)")
-            print("   - Interests: \(user1.interests)")
-            
-            print("👤 User 2: \(user2.firstName)")
-            print("   - Location: \(user2.latitude ?? 0), \(user2.longitude ?? 0)")
-            print("   - Answers: \(user2.aiAnswers.count)")
-            print("   - Interests: \(user2.interests)")
-            
-            // Calculate compatibility
-            if !user1.aiAnswers.isEmpty && !user2.aiAnswers.isEmpty {
-                let matchResults = await calculateCompatibilityScores(
-                    currentUser: user1,
-                    potentialMatches: [user2]
-                )
-                
-                if let match = matchResults.first {
-                    print("🎯 Compatibility Score: \(Int(match.compatibilityScore * 100))%")
-                    print("📊 Match Level: \(match.matchLevel)")
-                    print("💡 AI Reasoning: \(match.aiReasoning)")
-                } else {
-                    print("❌ No compatibility calculated")
-                }
-            } else {
-                print("⚠️ One or both users have no answers for compatibility analysis")
-            }
-            
-        } catch {
-            print("❌ Error testing match: \(error)")
-        }
+            let first = try await db.collection("discoveryProfiles").document(user1Id).getDocument()
+            let second = try await db.collection("discoveryProfiles").document(user2Id).getDocument()
+            guard let a = first.data(), let b = second.data() else { return }
+            let result = await calculateCompatibilityScores(
+                currentUser: try createUserFromFirestoreData(id: user1Id, data: a),
+                potentialMatches: [try createUserFromFirestoreData(id: user2Id, data: b)])
+            print("Computed \(result.count) discovery match")
+        } catch { print("Discovery check failed: \(error.localizedDescription)") }
     }
 }
 #endif

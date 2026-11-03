@@ -54,13 +54,14 @@ class FirebaseUserService: ObservableObject {
         
         // Set additional properties after initialization
         var finalUserData = userData
+        finalUserData.isVisible = user.isVisible
         finalUserData.lastSeen = Date()
         finalUserData.isOnline = true
         finalUserData.profileImageURL = user.profileImageURL
         finalUserData.createdAt = user.createdAt
         
         do {
-            try db.collection("users").document(currentUser.uid).setData(from: finalUserData)
+            try await PrivateProfileStore.save(uid: currentUser.uid, updates: Firestore.Encoder().encode(finalUserData))
             await MainActor.run {
                 self.currentUser = finalUserData
             }
@@ -75,6 +76,7 @@ class FirebaseUserService: ObservableObject {
         }
         
         do {
+            try await PrivateProfileStore.save(uid: userId)
             let document = try await db.collection("users").document(userId).getDocument()
             
             if let user = try? document.data(as: User.self) {
@@ -106,7 +108,10 @@ class FirebaseUserService: ObservableObject {
         updatedUser.lastSeen = Date()
         
         do {
-            try db.collection("users").document(userId).setData(from: updatedUser, merge: true)
+            var updates = try Firestore.Encoder().encode(updatedUser)
+            // Only the explicit visibility control may change discovery consent.
+            updates.removeValue(forKey: "isVisible")
+            try await PrivateProfileStore.save(uid: userId, updates: updates)
             await MainActor.run {
                 self.currentUser = updatedUser
             }
@@ -119,12 +124,11 @@ class FirebaseUserService: ObservableObject {
         let locationData: [String: Any] = [
             "latitude": location.coordinate.latitude,
             "longitude": location.coordinate.longitude,
-            "lastLocationUpdate": Timestamp(),
-            "isLocationVisible": true
+            "lastLocationUpdate": Timestamp()
         ]
         
         do {
-            try await db.collection("users").document(userId).updateData(locationData)
+            try await PrivateProfileStore.save(uid: userId, updates: locationData)
         } catch {
             throw FirebaseServiceError.firebaseError(error)
         }
@@ -133,11 +137,12 @@ class FirebaseUserService: ObservableObject {
     func setUserVisibility(_ isVisible: Bool, userId: String) async throws {
         let visibilityData: [String: Any] = [
             "isLocationVisible": isVisible,
+            "isVisible": isVisible,
             "lastSeen": Timestamp()
         ]
         
         do {
-            try await db.collection("users").document(userId).updateData(visibilityData)
+            try await PrivateProfileStore.save(uid: userId, updates: visibilityData)
         } catch {
             throw FirebaseServiceError.firebaseError(error)
         }
@@ -153,19 +158,11 @@ class FirebaseUserService: ObservableObject {
         
         stopListeningForNearbyUsers()
         
-        // Calculate approximate coordinate bounds for the radius
-        let latitudeDelta = radiusKm / 111.0 // Rough km per degree latitude
-        let longitudeDelta = radiusKm / (111.0 * cos(userLocation.coordinate.latitude * .pi / 180))
-        
-        let minLat = userLocation.coordinate.latitude - latitudeDelta
-        let maxLat = userLocation.coordinate.latitude + latitudeDelta
-        let minLng = userLocation.coordinate.longitude - longitudeDelta
-        let maxLng = userLocation.coordinate.longitude + longitudeDelta
-        
-        nearbyUsersListener = db.collection("users")
-            .whereField("isLocationVisible", isEqualTo: true)
-            .whereField("latitude", isGreaterThan: minLat)
-            .whereField("latitude", isLessThan: maxLat)
+        let bounds = DiscoveryProfile.latitudeBounds(userLocation.coordinate.latitude, radiusKm: radiusKm)
+        nearbyUsersListener = db.collection("discoveryProfiles")
+            .whereField("cellLat", isGreaterThanOrEqualTo: bounds.min)
+            .whereField("cellLat", isLessThanOrEqualTo: bounds.max)
+            .limit(to: 100)
             .addSnapshotListener { [weak self] snapshot, error in
                 if let error = error {
                     self?.error = .firebaseError(error)
@@ -175,31 +172,21 @@ class FirebaseUserService: ObservableObject {
                 guard let documents = snapshot?.documents else { return }
                 
                 let users = documents.compactMap { document -> User? in
-                    do {
-                        var user = try document.data(as: User.self)
-                        
-                        // Filter by longitude and exclude current user
-                        if user.id == currentUserId { return nil }
-                        
-                        guard let userLng = user.longitude,
-                              userLng >= minLng && userLng <= maxLng else { return nil }
-                        
-                        // Calculate actual distance
-                        if let userLat = user.latitude, let userLng = user.longitude {
-                            let otherUserLocation = CLLocation(latitude: userLat, longitude: userLng)
-                            let distance = userLocation.distance(from: otherUserLocation)
-                            
-                            if distance <= radiusKm * 1000 { // Convert km to meters
-                                user.distanceFromUser = distance
-                                return user
-                            }
-                        }
-                        
-                        return nil
-                    } catch {
-                        print("Error decoding user: \(error)")
-                        return nil
-                    }
+                    let data = document.data()
+                    guard document.documentID != currentUserId,
+                          let center = DiscoveryProfile.center(data) else { return nil }
+                    let distance = userLocation.distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
+                    guard distance <= (radiusKm + 16) * 1000 else { return nil }
+                    var user = User(id: document.documentID,
+                                    firstName: data["firstName"] as? String ?? "",
+                                    age: 0, bio: data["bio"] as? String ?? "",
+                                    location: "Approximate area",
+                                    interests: (data["interestsText"] as? String ?? "").split(separator: "\n").map(String.init))
+                    user.latitude = center.latitude
+                    user.longitude = center.longitude
+                    user.distanceFromUser = distance
+                    user.profileImageURL = data["profileImageURL"] as? String
+                    return user
                 }
                 
                 DispatchQueue.main.async {
@@ -228,7 +215,7 @@ class FirebaseUserService: ObservableObject {
         ]
         
         do {
-            try await db.collection("users").document(userId).updateData(statusData)
+            try await PrivateProfileStore.save(uid: userId, updates: statusData)
         } catch {
             print("Failed to update online status: \(error)")
         }
